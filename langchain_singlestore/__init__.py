@@ -7,6 +7,7 @@ from langchain_singlestore.retrievers import SingleStoreRetriever
 from langchain_singlestore.toolkits import SingleStoreToolkit
 from langchain_singlestore.tools import SingleStoreTool
 from langchain_singlestore.vectorstores import SingleStoreVectorStore
+from langchain_singlestore.cache import SingleStoreSemanticCache
 
 try:
     __version__ = metadata.version(__package__)
@@ -18,6 +19,7 @@ del metadata  # optional, avoids polluting the results of dir(__package__)
 __all__ = [
     "ChatSingleStore",
     "SingleStoreVectorStore",
+    "SingleStoreSemanticCache",
     "SingleStoreEmbeddings",
     "SingleStoreLoader",
     "SingleStoreRetriever",

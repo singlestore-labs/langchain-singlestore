@@ -1,6 +1,6 @@
 """SingleStore vector store"""
-
 from __future__ import annotations
+
 import json
 import re
 import singlestoredb as s2
@@ -37,7 +37,7 @@ ORDERING_DIRECTIVE: dict = {
 class SingleStoreVectorStore(VectorStore):
     """`SingleStore` vector store.
 
-    The prerequisite for using this class is the installation of the ``SingleStore``
+    The prerequisite for using this class is the installation of the ``singlestoredb``
     Python package.
 
     The SingleStore vectorstore can be created by providing an embedding function and
@@ -275,7 +275,7 @@ class SingleStoreVectorStore(VectorStore):
             self.connection_kwargs["conn_attrs"] = dict()
 
         self.connection_kwargs["conn_attrs"]["_connector_name"] = "langchain python sdk"
-        self.connection_kwargs["conn_attrs"]["_connector_version"] = "2.1.0"
+        self.connection_kwargs["conn_attrs"]["_connector_version"] = "3.0.0"
 
         # Create connection pool.
         self.connection_pool = QueuePool(
