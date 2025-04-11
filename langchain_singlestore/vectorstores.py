@@ -856,7 +856,7 @@ class SingleStoreVectorStore(VectorStore):
                     )
                 elif search_strategy == SingleStoreVectorStore.SearchStrategy.WEIGHTED_SUM:
                     cur.execute(
-                        """SELECT {}, {}, __score1 * %s + __score2 * %s as __score
+                        """SELECT {}, {}, r1.{} as {}, __score1 * %s + __score2 * %s as __score
                         FROM (
                             SELECT {}, {}, {}, MATCH ({}) AGAINST (%s) as __score1 
                         FROM {} {}) r1 FULL OUTER JOIN (
@@ -865,6 +865,7 @@ class SingleStoreVectorStore(VectorStore):
                         ) r2 ON r1.{} = r2.{} ORDER BY __score {} LIMIT %s""".format(
                             self.content_field,
                             self.metadata_field,
+                            self.id_field,
                             self.id_field,
                             self.id_field,
                             self.content_field,

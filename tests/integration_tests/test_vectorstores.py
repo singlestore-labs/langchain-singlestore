@@ -1,18 +1,17 @@
+import math
+import os
+import tempfile
 from typing import Generator, List, cast
 
-import pytest
 import numpy as np
-import tempfile
-import os
-from langchain_singlestore.vectorstores import SingleStoreVectorStore
-from langchain_singlestore._utils import DistanceStrategy
+import pytest
 
-from langchain_core.vectorstores import VectorStore
-from langchain_core.embeddings import Embeddings
 from langchain_core.documents import Document
-
-from langchain_experimental.open_clip import OpenCLIPEmbeddings   
-
+from langchain_core.embeddings import Embeddings
+from langchain_core.vectorstores import VectorStore
+from langchain_experimental.open_clip import OpenCLIPEmbeddings
+from langchain_singlestore._utils import DistanceStrategy
+from langchain_singlestore.vectorstores import SingleStoreVectorStore
 from langchain_tests.integration_tests import VectorStoreIntegrationTests
 
 TEST_SINGLESTOREDB_URL = "root:pass@localhost:3306/db"
@@ -30,6 +29,25 @@ class RandomEmbeddings(Embeddings):
 
     def embed_image(self, uris: List[str]) -> List[List[float]]:
         return [cast(list[float], np.random.rand(self.size).tolist()) for _ in uris]
+    
+class IncrementalEmbeddings(Embeddings):
+    """Fake embeddings with incremental vectors. For testing purposes."""
+
+    def __init__(self) -> None:
+        self.counter = 0
+
+    def set_counter(self, counter: int) -> None:
+        self.counter = counter
+
+    def embed_query(self, text: str) -> List[float]:
+        self.counter += 1
+        return [
+            math.cos(self.counter * math.pi / 10),
+            math.sin(self.counter * math.pi / 10),
+        ]
+
+    def embed_documents(self, texts: List[str]) -> List[List[float]]:
+        return [self.embed_query(text) for text in texts]
 
 
 class TestSingleStoreVectorStore(VectorStoreIntegrationTests):
@@ -78,6 +96,63 @@ class TestSingleStoreVectorStore(VectorStoreIntegrationTests):
         finally:
             # cleanup operations, or deleting data
             pass
+
+    @pytest.fixture()
+    def vectorestore_incremental(self) -> Generator[SingleStoreVectorStore, None, None]:
+        """Get an empty vectorstore with incremental embeddings for unit tests."""
+        # note: store should be EMPTY at this point
+        # if you need to delete data, you may do so here
+        try:
+            store = SingleStoreVectorStore(embedding=IncrementalEmbeddings(), host=TEST_SINGLESTOREDB_URL, use_full_text_search=True)
+            yield store
+            store.drop()
+        finally:
+            # cleanup operations, or deleting data
+            pass
+    
+    @pytest.fixture()
+    def snow_rain_docs(self) -> List[Document]:
+        return [
+            Document(
+                page_content="""In the parched desert, a sudden rainstorm brought relief,
+                as the droplets danced upon the thirsty earth, rejuvenating the landscape
+                with the sweet scent of petrichor.""",
+                metadata={"count": "1", "category": "rain", "group": "a"},
+            ),
+            Document(
+                page_content="""Amidst the bustling cityscape, the rain fell relentlessly,
+                creating a symphony of pitter-patter on the pavement, while umbrellas
+                bloomed like colorful flowers in a sea of gray.""",
+                metadata={"count": "2", "category": "rain", "group": "a"},
+            ),
+            Document(
+                page_content="""High in the mountains, the rain transformed into a delicate
+                mist, enveloping the peaks in a mystical veil, where each droplet seemed to
+                whisper secrets to the ancient rocks below.""",
+                metadata={"count": "3", "category": "rain", "group": "b"},
+            ),
+            Document(
+                page_content="""Blanketing the countryside in a soft, pristine layer, the
+                snowfall painted a serene tableau, muffling the world in a tranquil hush
+                as delicate flakes settled upon the branches of trees like nature's own 
+                lacework.""",
+                metadata={"count": "1", "category": "snow", "group": "b"},
+            ),
+            Document(
+                page_content="""In the urban landscape, snow descended, transforming
+                bustling streets into a winter wonderland, where the laughter of
+                children echoed amidst the flurry of snowballs and the twinkle of
+                holiday lights.""",
+                metadata={"count": "2", "category": "snow", "group": "a"},
+            ),
+            Document(
+                page_content="""Atop the rugged peaks, snow fell with an unyielding
+                intensity, sculpting the landscape into a pristine alpine paradise,
+                where the frozen crystals shimmered under the moonlight, casting a
+                spell of enchantment over the wilderness below.""",
+                metadata={"count": "3", "category": "snow", "group": "a"},
+            ),
+        ]
 
     @pytest.mark.xfail(reason="id should be integer")
     def test_add_documents_with_existing_ids(self, vectorstore: VectorStore) -> None:
@@ -288,3 +363,109 @@ class TestSingleStoreVectorStore(VectorStoreIntegrationTests):
         assert len(output) == 1
         assert output[0].page_content in image_uris
         assert output[0].page_content == IMAGES_DIR + "/right.jpeg"
+
+    def test_singlestoredb_text_only_search(self, vectorestore_incremental: VectorStore, snow_rain_docs: List[Document]) -> None:
+        vectorestore_incremental.add_documents(snow_rain_docs)
+        output = vectorestore_incremental.similarity_search(
+            "rainstorm in parched desert",
+            k=3,
+            filter={"count": "1"},
+            search_strategy=SingleStoreVectorStore.SearchStrategy.TEXT_ONLY,
+        )
+        assert len(output) == 2
+        assert (
+            "In the parched desert, a sudden rainstorm brought relief,"
+            in output[0].page_content
+        )
+        assert (
+            "Blanketing the countryside in a soft, pristine layer" in output[1].page_content
+        )
+
+        output = vectorestore_incremental.similarity_search(
+            "snowfall in countryside",
+            k=3,
+            search_strategy=SingleStoreVectorStore.SearchStrategy.TEXT_ONLY,
+        )
+        assert len(output) == 3
+        assert (
+            "Blanketing the countryside in a soft, pristine layer,"
+            in output[0].page_content
+        )
+
+    def test_singlestoredb_filter_by_text_search(self, vectorestore_incremental: VectorStore, snow_rain_docs: List[Document]) -> None:
+        vectorestore_incremental.add_documents(snow_rain_docs)
+        output = vectorestore_incremental.similarity_search(
+            "rainstorm in parched desert",
+            k=1,
+            search_strategy=SingleStoreVectorStore.SearchStrategy.FILTER_BY_TEXT,
+            filter_threshold=0,
+        )
+        assert len(output) == 1
+        assert (
+            "In the parched desert, a sudden rainstorm brought relief"
+            in output[0].page_content
+        )
+
+    def test_singlestoredb_filter_by_vector_search1(self, vectorestore_incremental: VectorStore, snow_rain_docs: List[Document]) -> None:
+        vectorestore_incremental.add_documents(snow_rain_docs)
+        output = vectorestore_incremental.similarity_search(
+            "rainstorm in parched desert, rain",
+            k=1,
+            filter={"category": "rain"},
+            search_strategy=SingleStoreVectorStore.SearchStrategy.FILTER_BY_VECTOR,
+            filter_threshold=-0.2,
+        )
+        assert len(output) == 1
+        assert (
+            "High in the mountains, the rain transformed into a delicate"
+            in output[0].page_content
+        )
+
+    def test_singlestoredb_filter_by_vector_search2(self, vectorestore_incremental: VectorStore, snow_rain_docs: List[Document]) -> None:
+        vectorestore_incremental.add_documents(snow_rain_docs)
+        output = vectorestore_incremental.similarity_search(
+            "rainstorm in parched desert, rain",
+            k=1,
+            filter={"group": "a"},
+            search_strategy=SingleStoreVectorStore.SearchStrategy.FILTER_BY_VECTOR,
+            filter_threshold=-0.2,
+        )
+        assert len(output) == 1
+        assert (
+            "Amidst the bustling cityscape, the rain fell relentlessly"
+            in output[0].page_content
+        )
+    
+    def test_singlestoredb_weighted_sum_search_unsupported_strategy(
+        self, snow_rain_docs: List[Document],
+    ) -> None:
+        docsearch = SingleStoreVectorStore.from_documents(
+            snow_rain_docs,
+            IncrementalEmbeddings(),
+            use_full_text_search=True,
+            use_vector_index=True,
+            vector_size=2,
+            host=TEST_SINGLESTOREDB_URL,
+            distance_strategy=DistanceStrategy.EUCLIDEAN_DISTANCE,
+        )
+        try:
+            docsearch.similarity_search(
+                "rainstorm in parched desert, rain",
+                k=1,
+                search_strategy=SingleStoreVectorStore.SearchStrategy.WEIGHTED_SUM,
+            )
+        except ValueError as e:
+            assert "Search strategy SearchStrategy.WEIGHTED_SUM is not" in str(e)
+
+    def test_singlestoredb_weighted_sum_search(self, vectorestore_incremental: VectorStore, snow_rain_docs: List[Document]) -> None:
+        vectorestore_incremental.add_documents(snow_rain_docs)
+        output = vectorestore_incremental.similarity_search(
+            "rainstorm in parched desert, rain",
+            k=1,
+            search_strategy=SingleStoreVectorStore.SearchStrategy.WEIGHTED_SUM,
+            filter={"category": "snow"},
+        )
+        assert len(output) == 1
+        assert (
+            "Atop the rugged peaks, snow fell with an unyielding" in output[0].page_content
+        )
