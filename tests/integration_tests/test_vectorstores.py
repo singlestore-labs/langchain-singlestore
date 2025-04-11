@@ -3,12 +3,16 @@ from typing import Generator, List, cast
 import pytest
 import numpy as np
 import tempfile
+import os
 from langchain_singlestore.vectorstores import SingleStoreVectorStore
 from langchain_singlestore._utils import DistanceStrategy
 
 from langchain_core.vectorstores import VectorStore
 from langchain_core.embeddings import Embeddings
 from langchain_core.documents import Document
+
+from langchain_experimental.open_clip import OpenCLIPEmbeddings   
+
 from langchain_tests.integration_tests import VectorStoreIntegrationTests
 
 TEST_SINGLESTOREDB_URL = "root:pass@localhost:3306/db"
@@ -264,4 +268,23 @@ class TestSingleStoreVectorStore(VectorStoreIntegrationTests):
         output = vectorestore_random.similarity_search("foo", k=1)
         assert len(output) == 1
         assert output[0].page_content in temp_files
-        
+
+    def test_add_image2(self) -> None:
+        docsearch = SingleStoreVectorStore(
+            OpenCLIPEmbeddings(), 
+            host=TEST_SINGLESTOREDB_URL,
+        )
+        IMAGES_DIR = "tests/integration_tests/images"
+        image_uris = sorted(
+            [
+                os.path.join(IMAGES_DIR, image_name)
+                for image_name in os.listdir(IMAGES_DIR)
+                if image_name.endswith(".jpeg")
+            ]
+        )
+        docsearch.add_images(image_uris)
+        output = docsearch.similarity_search("horse", k=1)
+        docsearch.drop()
+        assert len(output) == 1
+        assert output[0].page_content in image_uris
+        assert output[0].page_content == IMAGES_DIR + "/right.jpeg"

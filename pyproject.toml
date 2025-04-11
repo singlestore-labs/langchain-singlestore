@@ -61,6 +61,8 @@ pytest-socket = "^0.7.0"
 pytest-watcher = "^0.3.4"
 langchain-tests = "^0.3.5"
 langchain-experimental = "^0.3.4"
+open-clip-torch = "^2.32.0"
+torch = "^2.6.0"
 
 [tool.poetry.group.codespell.dependencies]
 codespell = "^2.2.6"
