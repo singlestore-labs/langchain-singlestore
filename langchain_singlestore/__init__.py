@@ -3,7 +3,7 @@ from importlib import metadata
 from langchain_singlestore.chat_message_history import SingleStoreChatMessageHistory
 from langchain_singlestore.document_loaders import SingleStoreLoader
 # from langchain_singlestore.embeddings import SingleStoreEmbeddings
-from langchain_singlestore.retrievers import SingleStoreRetriever
+#from langchain_singlestore.retrievers import SingleStoreRetriever
 from langchain_singlestore.vectorstores import SingleStoreVectorStore
 from langchain_singlestore.cache import SingleStoreSemanticCache
 
@@ -20,6 +20,6 @@ __all__ = [
     "SingleStoreChatMessageHistory",
 #    "SingleStoreEmbeddings",
     "SingleStoreLoader",
-    "SingleStoreRetriever",
+#    "SingleStoreRetriever",
     "__version__",
 ]
