@@ -169,7 +169,7 @@ class SingleStoreLoader(BaseLoader):
         try:
             cur = conn.cursor()
             try:
-                query = f"SELECT {self.content_field}, {self.metadata_field}, {self.id_field} FROM {self.table_name}"
+                query = f"SELECT {self.content_field}, {self.metadata_field}, {self.id_field} FROM {self.table_name} ORDER BY {self.id_field} ASC"
                 cur.execute(query)
                 for row in cur.fetchall():
                     content = row[0]
