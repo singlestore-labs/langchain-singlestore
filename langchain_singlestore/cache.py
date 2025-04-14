@@ -1,13 +1,13 @@
 from typing import Any, Dict, List, Optional
 
-from langchain_core.caches import BaseCache, RETURN_VAL_TYPE
+from langchain_core.caches import RETURN_VAL_TYPE, BaseCache
 from langchain_core.embeddings import Embeddings
 from langchain_core.load.dump import dumps
 from langchain_core.load.load import loads
 from langchain_core.outputs import Generation
-from langchain_singlestore.vectorstores import SingleStoreVectorStore
-from langchain_singlestore.vectorstores import DistanceStrategy
+
 from langchain_singlestore._utils import hash
+from langchain_singlestore.vectorstores import DistanceStrategy, SingleStoreVectorStore
 
 
 class SingleStoreSemanticCache(BaseCache):

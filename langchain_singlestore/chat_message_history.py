@@ -12,8 +12,6 @@ from langchain_core.messages import (
     message_to_dict,
     messages_from_dict,
 )
-
-import singlestoredb as s2
 from sqlalchemy.pool import QueuePool
 
 logger = logging.getLogger(__name__)

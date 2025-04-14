@@ -1,9 +1,9 @@
 """SingleStore vector store"""
+
 from __future__ import annotations
 
 import json
 import re
-import singlestoredb as s2
 from enum import Enum
 from typing import (
     Any,
@@ -11,12 +11,13 @@ from typing import (
     Iterable,
     List,
     Optional,
+    Sequence,
     Tuple,
     Type,
     TypeVar,
-    Sequence
 )
 
+import singlestoredb as s2
 from langchain_core.documents import Document
 from langchain_core.embeddings import Embeddings
 from langchain_core.vectorstores import VectorStore, VectorStoreRetriever
@@ -375,9 +376,7 @@ class SingleStoreVectorStore(VectorStore):
             and hasattr(self.embedding, "embed_image")
         ):
             embeddings = self.embedding.embed_image(uris=uris)
-        return self.add_texts(
-            uris, metadatas, embeddings, **kwargs
-        )
+        return self.add_texts(uris, metadatas, embeddings, **kwargs)
 
     def add_texts(
         self,
@@ -763,7 +762,10 @@ class SingleStoreVectorStore(VectorStore):
                 where_clause_values.append(query)
                 where_clause_values.append(float(filter_threshold))
 
-            if search_strategy == SingleStoreVectorStore.SearchStrategy.FILTER_BY_VECTOR:
+            if (
+                search_strategy
+                == SingleStoreVectorStore.SearchStrategy.FILTER_BY_VECTOR
+            ):
                 condition = "{}({}, JSON_ARRAY_PACK(%s)) ".format(
                     self.distance_strategy.name
                     if isinstance(self.distance_strategy, DistanceStrategy)
@@ -808,7 +810,8 @@ class SingleStoreVectorStore(VectorStore):
             try:
                 if (
                     search_strategy == SingleStoreVectorStore.SearchStrategy.VECTOR_ONLY
-                    or search_strategy == SingleStoreVectorStore.SearchStrategy.FILTER_BY_TEXT
+                    or search_strategy
+                    == SingleStoreVectorStore.SearchStrategy.FILTER_BY_TEXT
                 ):
                     search_options = ""
                     if (
@@ -839,8 +842,10 @@ class SingleStoreVectorStore(VectorStore):
                         + (k,),
                     )
                 elif (
-                    search_strategy == SingleStoreVectorStore.SearchStrategy.FILTER_BY_VECTOR
-                    or search_strategy == SingleStoreVectorStore.SearchStrategy.TEXT_ONLY
+                    search_strategy
+                    == SingleStoreVectorStore.SearchStrategy.FILTER_BY_VECTOR
+                    or search_strategy
+                    == SingleStoreVectorStore.SearchStrategy.TEXT_ONLY
                 ):
                     cur.execute(
                         """SELECT {}, {}, {}, MATCH ({}) AGAINST (%s) as __score
@@ -854,10 +859,13 @@ class SingleStoreVectorStore(VectorStore):
                         ),
                         (query,) + tuple(where_clause_values) + (k,),
                     )
-                elif search_strategy == SingleStoreVectorStore.SearchStrategy.WEIGHTED_SUM:
+                elif (
+                    search_strategy
+                    == SingleStoreVectorStore.SearchStrategy.WEIGHTED_SUM
+                ):
                     cur.execute(
-                        """SELECT {}, {}, r1.{} as {}, __score1 * %s + __score2 * %s as __score
-                        FROM (
+                        """SELECT {}, {}, r1.{} as {}, __score1 * %s + __score2 * %s
+                        as __score FROM (
                             SELECT {}, {}, {}, MATCH ({}) AGAINST (%s) as __score1 
                         FROM {} {}) r1 FULL OUTER JOIN (
                             SELECT {}, {}({}, JSON_ARRAY_PACK(%s)) as __score2
@@ -1054,7 +1062,6 @@ class SingleStoreVectorStore(VectorStore):
         instance.add_texts(texts, metadatas, embedding.embed_documents(texts), **kwargs)
         return instance
 
-
     def get_by_ids(self, ids: Sequence[str], /) -> list[Document]:
         """Get documents by their ids.
 
@@ -1064,10 +1071,10 @@ class SingleStoreVectorStore(VectorStore):
         Returns:
             A list of Document objects.
         """
-        documents = []
+        documents: list[Document] = []
 
         if not ids:
-            return documents    
+            return documents
 
         conn = self.connection_pool.connect()
         try:
@@ -1075,8 +1082,13 @@ class SingleStoreVectorStore(VectorStore):
             try:
                 cur.execute(
                     "SELECT {}, {}, {} FROM {} WHERE {} IN ({}) ORDER BY {}".format(
-                        self.content_field, self.metadata_field, self.id_field, 
-                        self.table_name, self.id_field, ",".join(ids), self.id_field
+                        self.content_field,
+                        self.metadata_field,
+                        self.id_field,
+                        self.table_name,
+                        self.id_field,
+                        ",".join(ids),
+                        self.id_field,
                     )
                 )
                 for row in cur.fetchall():
@@ -1086,9 +1098,8 @@ class SingleStoreVectorStore(VectorStore):
                 cur.close()
         finally:
             conn.close()
-        
-        return documents
 
+        return documents
 
     def drop(self) -> None:
         """Drop the table and delete all data from the vectorstore.

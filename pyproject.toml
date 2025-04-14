@@ -4,11 +4,11 @@ build-backend = "poetry.core.masonry.api"
 
 [tool.poetry]
 name = "langchain-singlestore"
-version = "0.1.0"
+version = "1.0.0"
 description = "An integration package connecting SingleStore and LangChain"
 authors = []
 readme = "README.md"
-repository = "https://github.com/langchain-ai/langchain"
+repository = "https://github.com/singlestore-labs/langchain-singlestore"
 license = "MIT"
 
 [tool.mypy]

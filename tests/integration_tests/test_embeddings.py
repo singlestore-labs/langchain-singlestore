@@ -2,8 +2,9 @@
 
 from typing import Type
 
-from langchain_singlestore.embeddings import SingleStoreEmbeddings
 from langchain_tests.integration_tests import EmbeddingsIntegrationTests
+
+from langchain_singlestore.embeddings import SingleStoreEmbeddings
 
 
 class TestParrotLinkEmbeddingsIntegration(EmbeddingsIntegrationTests):

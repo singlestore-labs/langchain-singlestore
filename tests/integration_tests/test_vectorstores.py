@@ -5,19 +5,21 @@ from typing import Generator, List, cast
 
 import numpy as np
 import pytest
-
 from langchain_core.documents import Document
 from langchain_core.embeddings import Embeddings
 from langchain_core.vectorstores import VectorStore
 from langchain_experimental.open_clip import OpenCLIPEmbeddings
+from langchain_tests.integration_tests import VectorStoreIntegrationTests
+
 from langchain_singlestore._utils import DistanceStrategy
 from langchain_singlestore.vectorstores import SingleStoreVectorStore
-from langchain_tests.integration_tests import VectorStoreIntegrationTests
 
 TEST_SINGLESTOREDB_URL = "root:pass@localhost:3306/db"
 
+
 class RandomEmbeddings(Embeddings):
     """Fake embeddings with random vectors. For testing purposes."""
+
     def __init__(self, size: int) -> None:
         self.size = size
 
@@ -29,7 +31,8 @@ class RandomEmbeddings(Embeddings):
 
     def embed_image(self, uris: List[str]) -> List[List[float]]:
         return [cast(list[float], np.random.rand(self.size).tolist()) for _ in uris]
-    
+
+
 class IncrementalEmbeddings(Embeddings):
     """Fake embeddings with incremental vectors. For testing purposes."""
 
@@ -51,46 +54,66 @@ class IncrementalEmbeddings(Embeddings):
 
 
 class TestSingleStoreVectorStore(VectorStoreIntegrationTests):
-    @pytest.fixture(params=[DistanceStrategy.DOT_PRODUCT, DistanceStrategy.EUCLIDEAN_DISTANCE])
+    @pytest.fixture(
+        params=[DistanceStrategy.DOT_PRODUCT, DistanceStrategy.EUCLIDEAN_DISTANCE]
+    )
     def vectorstore(self, request) -> Generator[VectorStore, None, None]:  # type: ignore
         """Get an empty vectorstore for unit tests."""
         # note: store should be EMPTY at this point
         # if you need to delete data, you may do so here
         try:
-            store = SingleStoreVectorStore(self.get_embeddings(), distance_strategy=request.param, host=TEST_SINGLESTOREDB_URL)
+            store = SingleStoreVectorStore(
+                self.get_embeddings(),
+                distance_strategy=request.param,
+                host=TEST_SINGLESTOREDB_URL,
+            )
             yield store
             store.drop()
         finally:
             # cleanup operations, or deleting data
             pass
 
-    @pytest.fixture(params=[(DistanceStrategy.DOT_PRODUCT, 10, None),
-                            (DistanceStrategy.EUCLIDEAN_DISTANCE, 10, {"index_type": "IVF_PQ", "nlist": 256}),
-                            (DistanceStrategy.EUCLIDEAN_DISTANCE, 100, None),])
-    def vectorstore_with_vector_index(self, request) -> Generator[VectorStore, None, None]:
+    @pytest.fixture(
+        params=[
+            (DistanceStrategy.DOT_PRODUCT, 10, None),
+            (
+                DistanceStrategy.EUCLIDEAN_DISTANCE,
+                10,
+                {"index_type": "IVF_PQ", "nlist": 256},
+            ),
+            (DistanceStrategy.EUCLIDEAN_DISTANCE, 100, None),
+        ]
+    )
+    def vectorstore_with_vector_index(
+        self, request: pytest.FixtureRequest
+    ) -> Generator[VectorStore, None, None]:
         """Get an empty vectorstore with vector index for unit tests."""
         # note: store should be EMPTY at this point
         # if you need to delete data, you may do so here
         try:
-            store = SingleStoreVectorStore(distance_strategy=request.param[0],
-                                           use_vector_index=True,
-                                           vector_size=request.param[1],
-                                           vector_index_options=request.param[2],
-                                           embedding=RandomEmbeddings(request.param[1]),
-                                           host=TEST_SINGLESTOREDB_URL)
+            store = SingleStoreVectorStore(
+                distance_strategy=request.param[0],
+                use_vector_index=True,
+                vector_size=request.param[1],
+                vector_index_options=request.param[2],
+                embedding=RandomEmbeddings(request.param[1]),
+                host=TEST_SINGLESTOREDB_URL,
+            )
             yield store
             store.drop()
         finally:
             # cleanup operations, or deleting data
             pass
-    
+
     @pytest.fixture()
     def vectorestore_random(self) -> Generator[SingleStoreVectorStore, None, None]:
         """Get an empty vectorstore with random embeddings for unit tests."""
         # note: store should be EMPTY at this point
         # if you need to delete data, you may do so here
         try:
-            store = SingleStoreVectorStore(embedding=RandomEmbeddings(10), host=TEST_SINGLESTOREDB_URL)
+            store = SingleStoreVectorStore(
+                embedding=RandomEmbeddings(10), host=TEST_SINGLESTOREDB_URL
+            )
             yield store
             store.drop()
         finally:
@@ -103,39 +126,43 @@ class TestSingleStoreVectorStore(VectorStoreIntegrationTests):
         # note: store should be EMPTY at this point
         # if you need to delete data, you may do so here
         try:
-            store = SingleStoreVectorStore(embedding=IncrementalEmbeddings(), host=TEST_SINGLESTOREDB_URL, use_full_text_search=True)
+            store = SingleStoreVectorStore(
+                embedding=IncrementalEmbeddings(),
+                host=TEST_SINGLESTOREDB_URL,
+                use_full_text_search=True,
+            )
             yield store
             store.drop()
         finally:
             # cleanup operations, or deleting data
             pass
-    
+
     @pytest.fixture()
     def snow_rain_docs(self) -> List[Document]:
         return [
             Document(
-                page_content="""In the parched desert, a sudden rainstorm brought relief,
-                as the droplets danced upon the thirsty earth, rejuvenating the landscape
-                with the sweet scent of petrichor.""",
+                page_content="""In the parched desert, a sudden rainstorm brought
+                relief, as the droplets danced upon the thirsty earth, rejuvenating
+                the landscape with the sweet scent of petrichor.""",
                 metadata={"count": "1", "category": "rain", "group": "a"},
             ),
             Document(
-                page_content="""Amidst the bustling cityscape, the rain fell relentlessly,
-                creating a symphony of pitter-patter on the pavement, while umbrellas
-                bloomed like colorful flowers in a sea of gray.""",
+                page_content="""Amidst the bustling cityscape, the rain fell
+                relentlessly, creating a symphony of pitter-patter on the pavement,
+                while umbrellas bloomed like colorful flowers in a sea of gray.""",
                 metadata={"count": "2", "category": "rain", "group": "a"},
             ),
             Document(
-                page_content="""High in the mountains, the rain transformed into a delicate
-                mist, enveloping the peaks in a mystical veil, where each droplet seemed to
-                whisper secrets to the ancient rocks below.""",
+                page_content="""High in the mountains, the rain transformed into a
+                delicate mist, enveloping the peaks in a mystical veil, where each
+                droplet seemed to whisper secrets to the ancient rocks below.""",
                 metadata={"count": "3", "category": "rain", "group": "b"},
             ),
             Document(
-                page_content="""Blanketing the countryside in a soft, pristine layer, the
-                snowfall painted a serene tableau, muffling the world in a tranquil hush
-                as delicate flakes settled upon the branches of trees like nature's own 
-                lacework.""",
+                page_content="""Blanketing the countryside in a soft, pristine layer,
+                the snowfall painted a serene tableau, muffling the world in a tranquil
+                hush as delicate flakes settled upon the branches of trees like nature's
+                own lacework.""",
                 metadata={"count": "1", "category": "snow", "group": "b"},
             ),
             Document(
@@ -236,9 +263,9 @@ class TestSingleStoreVectorStore(VectorStoreIntegrationTests):
 
     def test_vector_index(self, vectorstore_with_vector_index: VectorStore) -> None:
         """Test that vector index is created and used correctly."""
-        vectorstore_with_vector_index.add_texts(["foo"]*100)
+        vectorstore_with_vector_index.add_texts(["foo"] * 100)
         output = vectorstore_with_vector_index.similarity_search("foo", k=1)
-        assert output[0].page_content == "foo"  
+        assert output[0].page_content == "foo"
 
     def test_metadata_filtering_1(self, vectorstore: VectorStore) -> None:
         """Test that metadata filtering works correctly."""
@@ -259,7 +286,9 @@ class TestSingleStoreVectorStore(VectorStoreIntegrationTests):
             Document(page_content="bar", metadata={"id": 2, "category": "budget"}),
         ]
         vectorstore.add_documents(documents)
-        output = vectorstore.similarity_search("foo", k=1, filter={"category": "budget"})
+        output = vectorstore.similarity_search(
+            "foo", k=1, filter={"category": "budget"}
+        )
         assert output[0].page_content == "foo"
         assert output[0].metadata["category"] == "budget"
         assert len(output) == 1
@@ -271,12 +300,14 @@ class TestSingleStoreVectorStore(VectorStoreIntegrationTests):
             Document(page_content="bar", metadata={"id": 2, "category": "budget"}),
         ]
         vectorstore.add_documents(documents)
-        output = vectorstore.similarity_search("foo", k=1, filter={"category": "budget", "id": 2})
+        output = vectorstore.similarity_search(
+            "foo", k=1, filter={"category": "budget", "id": 2}
+        )
         assert output[0].page_content == "bar"
         assert output[0].metadata["category"] == "budget"
         assert output[0].metadata["id"] == 2
         assert len(output) == 1
-    
+
     def test_metadata_filtering_4(self, vectorstore: VectorStore) -> None:
         """Test that metadata filtering works correctly."""
         documents = [
@@ -284,43 +315,75 @@ class TestSingleStoreVectorStore(VectorStoreIntegrationTests):
             Document(page_content="bar", metadata={"id": 2, "category": "budget"}),
         ]
         vectorstore.add_documents(documents)
-        output = vectorstore.similarity_search("foo", k=1, filter={"category": "vacation"})
+        output = vectorstore.similarity_search(
+            "foo", k=1, filter={"category": "vacation"}
+        )
         assert len(output) == 0
-    
+
     def test_metadata_filtering_5(self, vectorstore: VectorStore) -> None:
         """Test that metadata filtering works correctly."""
         documents = [
-            Document(page_content="foo", metadata={"id": 1, "category": "budget", "subfield": {"subfield": {"idx": 1, "other_idx": 2}}}),
-            Document(page_content="bar", metadata={"id": 2, "category": "budget", "subfield": {"subfield": {"idx": 2, "other_idx": 3}}}),
+            Document(
+                page_content="foo",
+                metadata={
+                    "id": 1,
+                    "category": "budget",
+                    "subfield": {"subfield": {"idx": 1, "other_idx": 2}},
+                },
+            ),
+            Document(
+                page_content="bar",
+                metadata={
+                    "id": 2,
+                    "category": "budget",
+                    "subfield": {"subfield": {"idx": 2, "other_idx": 3}},
+                },
+            ),
         ]
         vectorstore.add_documents(documents)
-        output = vectorstore.similarity_search("foo", k=1, filter={"category": "budget", "subfield": {"subfield": {"idx": 2}}})
+        output = vectorstore.similarity_search(
+            "foo",
+            k=1,
+            filter={"category": "budget", "subfield": {"subfield": {"idx": 2}}},
+        )
         assert len(output) == 1
         assert output[0].page_content == "bar"
         assert output[0].metadata["category"] == "budget"
         assert output[0].metadata["subfield"]["subfield"]["idx"] == 2
         assert output[0].metadata["subfield"]["subfield"]["other_idx"] == 3
         assert output[0].metadata["id"] == 2
-    
+
     def test_metadata_filtering_6(self, vectorstore: VectorStore) -> None:
         """Test that metadata filtering works correctly."""
         documents = [
-            Document(page_content="foo", metadata={"id": 1, "category": "budget", "is_good": False}),
-            Document(page_content="bar", metadata={"id": 2, "category": "budget", "is_good": True}),
+            Document(
+                page_content="foo",
+                metadata={"id": 1, "category": "budget", "is_good": False},
+            ),
+            Document(
+                page_content="bar",
+                metadata={"id": 2, "category": "budget", "is_good": True},
+            ),
         ]
         vectorstore.add_documents(documents)
         output = vectorstore.similarity_search("foo", k=1, filter={"is_good": True})
         assert len(output) == 1
         assert output[0].page_content == "bar"
         assert output[0].metadata["category"] == "budget"
-        assert output[0].metadata["is_good"] == True
+        assert output[0].metadata["is_good"]
         assert output[0].metadata["id"] == 2
 
     def test_metadata_filtering_7(self, vectorstore: VectorStore) -> None:
         """Test that metadata filtering works correctly."""
         documents = [
-            Document(page_content="foo", metadata={"id": 1, "category": "budget", "score": 1.5}),
-            Document(page_content="bar", metadata={"id": 2, "category": "budget", "score": 2.5}),
+            Document(
+                page_content="foo",
+                metadata={"id": 1, "category": "budget", "score": 1.5},
+            ),
+            Document(
+                page_content="bar",
+                metadata={"id": 2, "category": "budget", "score": 2.5},
+            ),
         ]
         vectorstore.add_documents(documents)
         output = vectorstore.similarity_search("foo", k=1, filter={"score": 2.5})
@@ -346,7 +409,11 @@ class TestSingleStoreVectorStore(VectorStoreIntegrationTests):
 
     def test_add_image2(self) -> None:
         docsearch = SingleStoreVectorStore(
-            OpenCLIPEmbeddings(), 
+            OpenCLIPEmbeddings(
+                model=None,
+                preprocess=None,
+                tokenizer=None,
+            ),
             host=TEST_SINGLESTOREDB_URL,
         )
         IMAGES_DIR = "tests/integration_tests/images"
@@ -364,7 +431,9 @@ class TestSingleStoreVectorStore(VectorStoreIntegrationTests):
         assert output[0].page_content in image_uris
         assert output[0].page_content == IMAGES_DIR + "/right.jpeg"
 
-    def test_singlestoredb_text_only_search(self, vectorestore_incremental: VectorStore, snow_rain_docs: List[Document]) -> None:
+    def test_singlestoredb_text_only_search(
+        self, vectorestore_incremental: VectorStore, snow_rain_docs: List[Document]
+    ) -> None:
         vectorestore_incremental.add_documents(snow_rain_docs)
         output = vectorestore_incremental.similarity_search(
             "rainstorm in parched desert",
@@ -373,13 +442,8 @@ class TestSingleStoreVectorStore(VectorStoreIntegrationTests):
             search_strategy=SingleStoreVectorStore.SearchStrategy.TEXT_ONLY,
         )
         assert len(output) == 2
-        assert (
-            "In the parched desert, a sudden rainstorm brought relief,"
-            in output[0].page_content
-        )
-        assert (
-            "Blanketing the countryside in a soft, pristine layer" in output[1].page_content
-        )
+        assert "In the parched desert" in output[0].page_content
+        assert "Blanketing the countryside" in output[1].page_content
 
         output = vectorestore_incremental.similarity_search(
             "snowfall in countryside",
@@ -387,12 +451,11 @@ class TestSingleStoreVectorStore(VectorStoreIntegrationTests):
             search_strategy=SingleStoreVectorStore.SearchStrategy.TEXT_ONLY,
         )
         assert len(output) == 3
-        assert (
-            "Blanketing the countryside in a soft, pristine layer,"
-            in output[0].page_content
-        )
+        assert "Blanketing the countryside" in output[0].page_content
 
-    def test_singlestoredb_filter_by_text_search(self, vectorestore_incremental: VectorStore, snow_rain_docs: List[Document]) -> None:
+    def test_singlestoredb_filter_by_text_search(
+        self, vectorestore_incremental: VectorStore, snow_rain_docs: List[Document]
+    ) -> None:
         vectorestore_incremental.add_documents(snow_rain_docs)
         output = vectorestore_incremental.similarity_search(
             "rainstorm in parched desert",
@@ -401,12 +464,11 @@ class TestSingleStoreVectorStore(VectorStoreIntegrationTests):
             filter_threshold=0,
         )
         assert len(output) == 1
-        assert (
-            "In the parched desert, a sudden rainstorm brought relief"
-            in output[0].page_content
-        )
+        assert "In the parched desert" in output[0].page_content
 
-    def test_singlestoredb_filter_by_vector_search1(self, vectorestore_incremental: VectorStore, snow_rain_docs: List[Document]) -> None:
+    def test_singlestoredb_filter_by_vector_search1(
+        self, vectorestore_incremental: VectorStore, snow_rain_docs: List[Document]
+    ) -> None:
         vectorestore_incremental.add_documents(snow_rain_docs)
         output = vectorestore_incremental.similarity_search(
             "rainstorm in parched desert, rain",
@@ -416,12 +478,11 @@ class TestSingleStoreVectorStore(VectorStoreIntegrationTests):
             filter_threshold=-0.2,
         )
         assert len(output) == 1
-        assert (
-            "High in the mountains, the rain transformed into a delicate"
-            in output[0].page_content
-        )
+        assert "High in the mountains" in output[0].page_content
 
-    def test_singlestoredb_filter_by_vector_search2(self, vectorestore_incremental: VectorStore, snow_rain_docs: List[Document]) -> None:
+    def test_singlestoredb_filter_by_vector_search2(
+        self, vectorestore_incremental: VectorStore, snow_rain_docs: List[Document]
+    ) -> None:
         vectorestore_incremental.add_documents(snow_rain_docs)
         output = vectorestore_incremental.similarity_search(
             "rainstorm in parched desert, rain",
@@ -431,13 +492,11 @@ class TestSingleStoreVectorStore(VectorStoreIntegrationTests):
             filter_threshold=-0.2,
         )
         assert len(output) == 1
-        assert (
-            "Amidst the bustling cityscape, the rain fell relentlessly"
-            in output[0].page_content
-        )
-    
+        assert "Amidst the bustling cityscape" in output[0].page_content
+
     def test_singlestoredb_weighted_sum_search_unsupported_strategy(
-        self, snow_rain_docs: List[Document],
+        self,
+        snow_rain_docs: List[Document],
     ) -> None:
         docsearch = SingleStoreVectorStore.from_documents(
             snow_rain_docs,
@@ -457,7 +516,9 @@ class TestSingleStoreVectorStore(VectorStoreIntegrationTests):
         except ValueError as e:
             assert "Search strategy SearchStrategy.WEIGHTED_SUM is not" in str(e)
 
-    def test_singlestoredb_weighted_sum_search(self, vectorestore_incremental: VectorStore, snow_rain_docs: List[Document]) -> None:
+    def test_singlestoredb_weighted_sum_search(
+        self, vectorestore_incremental: VectorStore, snow_rain_docs: List[Document]
+    ) -> None:
         vectorestore_incremental.add_documents(snow_rain_docs)
         output = vectorestore_incremental.similarity_search(
             "rainstorm in parched desert, rain",
@@ -466,6 +527,4 @@ class TestSingleStoreVectorStore(VectorStoreIntegrationTests):
             filter={"category": "snow"},
         )
         assert len(output) == 1
-        assert (
-            "Atop the rugged peaks, snow fell with an unyielding" in output[0].page_content
-        )
+        assert "Atop the rugged peaks" in output[0].page_content

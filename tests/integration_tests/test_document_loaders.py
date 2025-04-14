@@ -1,9 +1,11 @@
-from langchain_singlestore.vectorstores import SingleStoreVectorStore
-from langchain_singlestore.document_loaders import SingleStoreLoader
 from langchain_core.documents import Document
 from langchain_core.embeddings.fake import FakeEmbeddings
 
+from langchain_singlestore.document_loaders import SingleStoreLoader
+from langchain_singlestore.vectorstores import SingleStoreVectorStore
+
 TEST_SINGLESTOREDB_URL = "root:pass@localhost:3306/db"
+
 
 def test_singlestore_document_loader() -> None:
     # Define test documents

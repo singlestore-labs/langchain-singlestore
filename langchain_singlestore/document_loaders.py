@@ -1,14 +1,12 @@
 """SingleStore document loader."""
 
 import re
-
-from typing import Iterator, Any
+from typing import Any, Iterator
 
 import singlestoredb as s2
-from sqlalchemy.pool import QueuePool
-
 from langchain_core.document_loaders.base import BaseLoader
 from langchain_core.documents import Document
+from sqlalchemy.pool import QueuePool
 
 
 class SingleStoreLoader(BaseLoader):
@@ -169,14 +167,17 @@ class SingleStoreLoader(BaseLoader):
         try:
             cur = conn.cursor()
             try:
-                query = f"SELECT {self.content_field}, {self.metadata_field}, {self.id_field} FROM {self.table_name} ORDER BY {self.id_field} ASC"
+                query = f"""SELECT {self.content_field},
+                        {self.metadata_field}, 
+                        {self.id_field}
+                        FROM {self.table_name} ORDER BY {self.id_field} ASC"""
                 cur.execute(query)
                 for row in cur.fetchall():
                     content = row[0]
                     metadata = row[1]
                     doc_id = row[2]
                     yield Document(page_content=content, metadata=metadata, id=doc_id)
-            finally:    
+            finally:
                 cur.close()
         finally:
             conn.close()

@@ -1,7 +1,6 @@
-"""Utility functions for working with vectors and vectorstores."""
-
-from enum import Enum
 import hashlib
+from enum import Enum
+
 
 class DistanceStrategy(str, Enum):
     """Enumerator of the Distance strategies for calculating distances
@@ -9,6 +8,7 @@ class DistanceStrategy(str, Enum):
 
     EUCLIDEAN_DISTANCE = "EUCLIDEAN_DISTANCE"
     DOT_PRODUCT = "DOT_PRODUCT"
+
 
 def hash(_input: str) -> str:
     """Use a deterministic hashing approach."""
