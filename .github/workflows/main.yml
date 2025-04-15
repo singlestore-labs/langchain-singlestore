@@ -1,0 +1,61 @@
+name: Lint and Integration Tests
+
+on:
+  push:
+    branches: [ main ]
+  pull_request:
+    branches: [ main ]
+  workflow_dispatch:
+
+jobs:
+  lint-and-tests:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v3
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Install Poetry
+        run: |
+          curl -sSL https://install.python-poetry.org | python3 -
+          echo "$HOME/.local/bin" >> $GITHUB_PATH
+
+      - name: Configure Poetry
+        run: |
+          poetry config virtualenvs.create true
+          poetry config virtualenvs.in-project true
+
+      - name: Install dependencies
+        run: poetry install --with lint,typing,test,test_integration
+
+      - name: Run linter
+        run: make lint
+
+      - name: Generate init.sql
+        run: echo 'create database db;' > init.sql
+
+      - name: Start SingleStore Dev
+        run: |
+          docker run \
+            -d --name singlestoredb-dev \
+            -e ROOT_PASSWORD="pass" \
+            -p 3306:3306 -p 8080:8080 -p 9000:9000 \
+            -v ${{ github.workspace }}/init.sql:/init.sql \
+            ghcr.io/singlestore-labs/singlestoredb-dev:latest
+
+      - name: Wait for SingleStore to be ready
+        run: |
+          echo "Waiting for SingleStore to be ready..."
+          for i in {1..30}; do
+            docker exec singlestoredb-dev singlestore -u root -ppass -e "SELECT 1" && break
+            echo "Not ready yet... retrying in 2s"
+            sleep 2
+          done
+
+      - name: Run integration tests
+        run: make ci_tests
