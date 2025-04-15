@@ -5,7 +5,7 @@ all: help
 
 # Define a variable for the test file path.
 TEST_FILE ?= tests/unit_tests/
-integration_test integration_tests: TEST_FILE = tests/integration_tests/
+integration_test integration_tests ci_tests: TEST_FILE = tests/integration_tests/
 
 
 # unit tests are run with the --disable-socket flag to prevent network calls
@@ -18,6 +18,10 @@ test_watch:
 # integration tests are run without the --disable-socket flag to allow network calls
 integration_test integration_tests:
 	poetry run pytest $(TEST_FILE)
+
+# CI should not run the test_add_image2 test, as it downloads a lot of data nd takes lots of time
+ci_tests:
+	poetry run pytest $(TEST_FILE) -k "not test_add_image2"
 
 ######################
 # LINTING AND FORMATTING

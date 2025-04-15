@@ -1,1 +1,6 @@
 __pycache__
+.ruff_cache
+.vscode
+.mypy_cache
+poetry.lock
+.pytest_cache
