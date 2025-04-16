@@ -131,3 +131,7 @@ make integration_tests
 
 The `test_add_image2` integration test for `SingleStoreVectorStore` downloads data to your local machine. The first run may take a significant amount of time due to the data download process. Subsequent runs will be faster as the data will already be available locally.
 
+## Contribution
+
+We welcome contributions to the `langchain-singlestore` project! Please refer to the [CONTRIBUTE.md](./CONTRIBUTE.md) file for detailed guidelines on how to contribute, including instructions for running tests, linting, and publishing new package versions.
+
