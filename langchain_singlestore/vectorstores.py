@@ -433,12 +433,22 @@ class SingleStoreVectorStore(VectorStore):
                             result_ids.append(str(row[0]))
                     else:
                         cur.execute(
-                            """REPLACE INTO {}({}, {}, {}, {})
-                            VALUES (%s, %s, JSON_ARRAY_PACK(%s), %s)""".format(
+                            """INSERT INTO {}({}, {}, {}, {})
+                            VALUES (%s, %s, JSON_ARRAY_PACK(%s), %s)
+                            ON DUPLICATE KEY UPDATE
+                                {} = VALUES({}),
+                                {} = VALUES({}),
+                                {} = VALUES({})""".format(
                                 self.table_name,
                                 self.id_field,
                                 self.content_field,
                                 self.vector_field,
+                                self.metadata_field,
+                                self.content_field,
+                                self.content_field,
+                                self.vector_field,
+                                self.vector_field,
+                                self.metadata_field,
                                 self.metadata_field,
                             ),
                             (
