@@ -36,6 +36,9 @@ jobs:
       - name: Run linter
         run: make lint
 
+      - name: Run unit tests
+        run: make tests
+
       - name: Generate init.sql
         run: echo 'create database db;' > init.sql
 
