@@ -15,6 +15,7 @@ from typing import (
     Tuple,
     Type,
     TypeVar,
+    Union,
 )
 
 import singlestoredb as s2
@@ -23,6 +24,7 @@ from langchain_core.embeddings import Embeddings
 from langchain_core.vectorstores import VectorStore, VectorStoreRetriever
 from sqlalchemy.pool import QueuePool
 
+from langchain_singlestore._filter import FilterTypedDict, _parse_filter
 from langchain_singlestore._utils import DistanceStrategy, set_connector_attributes
 
 VST = TypeVar("VST", bound=VectorStore)
@@ -33,6 +35,93 @@ ORDERING_DIRECTIVE: dict = {
     DistanceStrategy.EUCLIDEAN_DISTANCE: "",
     DistanceStrategy.DOT_PRODUCT: "DESC",
 }
+
+
+def _is_advanced_filter(filter_dict: dict) -> bool:
+    """Detect if filter uses advanced FilterTypedDict syntax (with operators).
+
+    Advanced filters contain keys like $and, $or, or nested dicts with operator keys
+    like $eq, $ne, $gt, $gte, $lt, $lte, $in, $nin, $exists.
+
+    Simple filters just have field names mapping to values.
+
+    Args:
+        filter_dict: The filter dictionary to check
+
+    Returns:
+        bool: True if filter uses advanced syntax, False if simple nested dict
+    """
+    if not filter_dict:
+        return False
+
+    # Check for direct operators at root level
+    if any(key.startswith("$") for key in filter_dict.keys()):
+        return True
+
+    # Check for operators in nested dicts
+    for value in filter_dict.values():
+        if isinstance(value, dict):
+            if any(key.startswith("$") for key in value.keys()):
+                return True
+
+    return False
+
+
+def _apply_filter_to_where_clause(
+    metadata_field: str,
+    filter_dict: Optional[Union[dict, FilterTypedDict]],
+    where_clause_values: List[Any],
+    arguments: List[str],
+) -> None:
+    """Apply metadata filter to WHERE clause.
+
+    Supports both simple nested dicts and advanced FilterTypedDict syntax with
+    operators like $eq, $gt, $and, $or, etc.
+
+    Args:
+        metadata_field: Name of the metadata field in the database
+        filter_dict: Filter specification (simple dict or FilterTypedDict)
+        where_clause_values: List to accumulate parameter values for SQL
+        arguments: List to accumulate SQL WHERE clause conditions
+    """
+    if not filter_dict:
+        return
+
+    if _is_advanced_filter(filter_dict):
+        # Use advanced filter parsing with operators
+        try:
+            filter_query, filter_params = _parse_filter(filter_dict, metadata_field)  # type: ignore[arg-type]
+            arguments.append(filter_query)
+            where_clause_values.extend(filter_params)
+        except (ValueError, KeyError) as e:
+            raise ValueError(
+                f"Invalid advanced filter specification: {e}. "
+                "See documentation for FilterTypedDict syntax."
+            ) from e
+    else:
+        # Use simple nested dict filtering (existing behavior)
+        def build_where_clause(
+            where_clause_values_inner: List[Any],
+            sub_filter: dict,
+            prefix_args: Optional[List[str]] = None,
+        ) -> None:
+            prefix_args = prefix_args or []
+            for key in sub_filter.keys():
+                if isinstance(sub_filter[key], dict):
+                    build_where_clause(
+                        where_clause_values_inner, sub_filter[key], prefix_args + [key]
+                    )
+                else:
+                    arguments.append(
+                        "JSON_EXTRACT_JSON({}, {}) = %s".format(
+                            metadata_field,
+                            ", ".join(["%s"] * (len(prefix_args) + 1)),
+                        )
+                    )
+                    where_clause_values_inner += prefix_args + [key]
+                    where_clause_values_inner.append(json.dumps(sub_filter[key]))
+
+        build_where_clause(where_clause_values, filter_dict)
 
 
 class SingleStoreVectorStore(VectorStore):
@@ -497,7 +586,7 @@ class SingleStoreVectorStore(VectorStore):
         self,
         query: str,
         k: int = 4,
-        filter: Optional[dict] = None,
+        filter: Optional[Union[dict, FilterTypedDict]] = None,
         search_strategy: SearchStrategy = SearchStrategy.VECTOR_ONLY,
         filter_threshold: float = 0,
         text_weight: float = 0.5,
@@ -512,7 +601,18 @@ class SingleStoreVectorStore(VectorStore):
         Args:
             query (str): The query text for which to find similar documents.
             k (int): The number of documents to return. Default is 4.
-            filter (dict): A dictionary of metadata fields and values to filter by.
+            filter (dict or FilterTypedDict, optional): A dictionary to filter by
+                metadata. Can be either:
+
+                1. Simple dict: ``{"field": "value", "status": "active"}``
+                   (existing nested dict format)
+
+                2. FilterTypedDict: Advanced filtering with operators:
+                   - Comparisons: ``{"field": {"$eq": "value"}}``
+                   - Numeric: ``{"age": {"$gt": 18}}``
+                   - Collections: ``{"tags": {"$in": ["a", "b"]}}``
+                   - Logical: ``{"$and": [{...}, {...}]}``
+
                 Default is None.
             search_strategy (SearchStrategy): The search strategy to use.
                 Default is SearchStrategy.VECTOR_ONLY.
@@ -619,7 +719,7 @@ class SingleStoreVectorStore(VectorStore):
         self,
         query: str,
         k: int = 4,
-        filter: Optional[dict] = None,
+        filter: Optional[Union[dict, FilterTypedDict]] = None,
         search_strategy: SearchStrategy = SearchStrategy.VECTOR_ONLY,
         filter_threshold: float = 1,
         text_weight: float = 0.5,
@@ -632,8 +732,18 @@ class SingleStoreVectorStore(VectorStore):
         Args:
             query: Text to look up documents similar to.
             k: Number of Documents to return. Defaults to 4.
-            filter: A dictionary of metadata fields and values to filter by.
-                    Defaults to None.
+            filter: A dictionary to filter by metadata. Can be either:
+
+                1. Simple dict: ``{"field": "value", "status": "active"}``
+                   (existing nested dict format)
+
+                2. FilterTypedDict: Advanced filtering with operators:
+                   - Comparisons: ``{"field": {"$eq": "value"}}``
+                   - Numeric: ``{"age": {"$gt": 18}}``
+                   - Collections: ``{"tags": {"$in": ["a", "b"]}}``
+                   - Logical: ``{"$and": [{...}, {...}]}``
+
+                Defaults to None.
             search_strategy (SearchStrategy): The search strategy to use.
                 Default is SearchStrategy.VECTOR_ONLY.
                 Available options are:
@@ -786,29 +896,10 @@ class SingleStoreVectorStore(VectorStore):
                 where_clause_values.append("[{}]".format(",".join(map(str, embedding))))
                 where_clause_values.append(float(filter_threshold))
 
-            def build_where_clause(
-                where_clause_values: List[Any],
-                sub_filter: dict,
-                prefix_args: Optional[List[str]] = None,
-            ) -> None:
-                prefix_args = prefix_args or []
-                for key in sub_filter.keys():
-                    if isinstance(sub_filter[key], dict):
-                        build_where_clause(
-                            where_clause_values, sub_filter[key], prefix_args + [key]
-                        )
-                    else:
-                        arguments.append(
-                            "JSON_EXTRACT_JSON({}, {}) = %s".format(
-                                self.metadata_field,
-                                ", ".join(["%s"] * (len(prefix_args) + 1)),
-                            )
-                        )
-                        where_clause_values += prefix_args + [key]
-                        where_clause_values.append(json.dumps(sub_filter[key]))
-
             if filter:
-                build_where_clause(where_clause_values, filter)
+                _apply_filter_to_where_clause(
+                    self.metadata_field, filter, where_clause_values, arguments
+                )
             where_clause += " AND ".join(arguments)
 
         try:

@@ -528,3 +528,285 @@ class TestSingleStoreVectorStore(VectorStoreIntegrationTests):
         )
         assert len(output) == 1
         assert "Atop the rugged peaks" in output[0].page_content
+
+    @pytest.fixture()
+    def numeric_docs(self) -> List[Document]:
+        """Documents with numeric metadata for testing FilterTypedDict operators."""
+        return [
+            Document(
+                page_content="Product A with 100 views",
+                metadata={"name": "A", "views": 100, "rating": 4.5, "active": True},
+            ),
+            Document(
+                page_content="Product B with 200 views",
+                metadata={"name": "B", "views": 200, "rating": 4.0, "active": True},
+            ),
+            Document(
+                page_content="Product C with 50 views",
+                metadata={"name": "C", "views": 50, "rating": 3.5, "active": False},
+            ),
+            Document(
+                page_content="Product D with 300 views",
+                metadata={"name": "D", "views": 300, "rating": 5.0, "active": True},
+            ),
+            Document(
+                page_content="Product E with 150 views",
+                metadata={"name": "E", "views": 150, "rating": 4.2, "active": False},
+            ),
+        ]
+
+    def test_filter_typed_dict_simple_filter_backward_compatibility(
+        self, vectorestore_random: SingleStoreVectorStore, numeric_docs: List[Document]
+    ) -> None:
+        """Test that simple nested dict filters still work (backward compatibility)."""
+        vectorestore_random.add_documents(numeric_docs)
+        output = vectorestore_random.similarity_search(
+            "product views",
+            k=10,
+            filter={"active": True},
+        )
+        assert len(output) == 3
+        names = [doc.metadata.get("name") for doc in output]
+        assert "A" in names
+        assert "B" in names
+        assert "D" in names
+
+    def test_filter_typed_dict_eq_operator(
+        self, vectorestore_random: SingleStoreVectorStore, numeric_docs: List[Document]
+    ) -> None:
+        """Test $eq operator for exact matching."""
+        vectorestore_random.add_documents(numeric_docs)
+        output = vectorestore_random.similarity_search(
+            "product",
+            k=10,
+            filter={"name": {"$eq": "B"}},
+        )
+        assert len(output) == 1
+        assert output[0].metadata["name"] == "B"
+
+    def test_filter_typed_dict_ne_operator(
+        self, vectorestore_random: SingleStoreVectorStore, numeric_docs: List[Document]
+    ) -> None:
+        """Test $ne operator for not equal matching."""
+        vectorestore_random.add_documents(numeric_docs)
+        output = vectorestore_random.similarity_search(
+            "product",
+            k=10,
+            filter={"name": {"$ne": "A"}},
+        )
+        assert len(output) == 4
+        names = [doc.metadata.get("name") for doc in output]
+        assert "A" not in names
+        assert "B" in names
+        assert "C" in names
+        assert "D" in names
+        assert "E" in names
+
+    def test_filter_typed_dict_gt_operator(
+        self, vectorestore_random: SingleStoreVectorStore, numeric_docs: List[Document]
+    ) -> None:
+        """Test $gt operator for greater than numeric comparison."""
+        vectorestore_random.add_documents(numeric_docs)
+        output = vectorestore_random.similarity_search(
+            "product views",
+            k=10,
+            filter={"views": {"$gt": 150}},
+        )
+        assert len(output) == 2
+        names = [doc.metadata.get("name") for doc in output]
+        assert "B" in names  # 200 views
+        assert "D" in names  # 300 views
+
+    def test_filter_typed_dict_gte_operator(
+        self, vectorestore_random: SingleStoreVectorStore, numeric_docs: List[Document]
+    ) -> None:
+        """Test $gte operator for greater than or equal numeric comparison."""
+        vectorestore_random.add_documents(numeric_docs)
+        output = vectorestore_random.similarity_search(
+            "product views",
+            k=10,
+            filter={"views": {"$gte": 150}},
+        )
+        assert len(output) == 3
+        names = [doc.metadata.get("name") for doc in output]
+        assert "B" in names  # 200 views
+        assert "D" in names  # 300 views
+        assert "E" in names  # 150 views
+
+    def test_filter_typed_dict_lt_operator(
+        self, vectorestore_random: SingleStoreVectorStore, numeric_docs: List[Document]
+    ) -> None:
+        """Test $lt operator for less than numeric comparison."""
+        vectorestore_random.add_documents(numeric_docs)
+        output = vectorestore_random.similarity_search(
+            "product views",
+            k=10,
+            filter={"views": {"$lt": 100}},
+        )
+        assert len(output) == 1
+        names = [doc.metadata.get("name") for doc in output]
+        assert "A" not in names  # 100 views, but this is the boundary
+        assert "C" in names  # 50 views
+
+    def test_filter_typed_dict_lte_operator(
+        self, vectorestore_random: SingleStoreVectorStore, numeric_docs: List[Document]
+    ) -> None:
+        """Test $lte operator for less than or equal numeric comparison."""
+        vectorestore_random.add_documents(numeric_docs)
+        output = vectorestore_random.similarity_search(
+            "product views",
+            k=10,
+            filter={"views": {"$lte": 100}},
+        )
+        assert len(output) == 2
+        names = [doc.metadata.get("name") for doc in output]
+        assert "A" in names  # 100 views
+        assert "C" in names  # 50 views
+
+    def test_filter_typed_dict_in_operator(
+        self, vectorestore_random: SingleStoreVectorStore, numeric_docs: List[Document]
+    ) -> None:
+        """Test $in operator for membership in list."""
+        vectorestore_random.add_documents(numeric_docs)
+        output = vectorestore_random.similarity_search(
+            "product",
+            k=10,
+            filter={"name": {"$in": ["A", "C"]}},
+        )
+        assert len(output) == 2
+        names = [doc.metadata.get("name") for doc in output]
+        assert "A" in names
+        assert "C" in names
+
+    def test_filter_typed_dict_nin_operator(
+        self, vectorestore_random: SingleStoreVectorStore, numeric_docs: List[Document]
+    ) -> None:
+        """Test $nin operator for exclusion from list."""
+        vectorestore_random.add_documents(numeric_docs)
+        output = vectorestore_random.similarity_search(
+            "product",
+            k=10,
+            filter={"name": {"$nin": ["A", "B"]}},
+        )
+        assert len(output) == 3
+        names = [doc.metadata.get("name") for doc in output]
+        assert "A" not in names
+        assert "B" not in names
+        assert "C" in names
+        assert "D" in names
+        assert "E" in names
+
+    def test_filter_typed_dict_exists_true(
+        self, vectorestore_random: SingleStoreVectorStore, numeric_docs: List[Document]
+    ) -> None:
+        """Test $exists operator to check field existence (true)."""
+        vectorestore_random.add_documents(numeric_docs)
+        output = vectorestore_random.similarity_search(
+            "product",
+            k=10,
+            filter={"rating": {"$exists": True}},
+        )
+        # All docs have rating field
+        assert len(output) == 5
+
+    def test_filter_typed_dict_exists_false(
+        self, vectorestore_random: SingleStoreVectorStore, numeric_docs: List[Document]
+    ) -> None:
+        """Test $exists operator to check field absence (false)."""
+        # Add a document without 'discount' field
+        docs = numeric_docs + [
+            Document(
+                page_content="Product F",
+                metadata={"name": "F", "views": 100},
+            )
+        ]
+        vectorestore_random.add_documents(docs)
+        output = vectorestore_random.similarity_search(
+            "product",
+            k=10,
+            filter={"discount": {"$exists": False}},
+        )
+        # All 6 documents don't have 'discount' field
+        assert len(output) == 6
+
+    def test_filter_typed_dict_and_operator_multiple_conditions(
+        self, vectorestore_random: SingleStoreVectorStore, numeric_docs: List[Document]
+    ) -> None:
+        """Test $and operator to combine multiple conditions."""
+        vectorestore_random.add_documents(numeric_docs)
+        output = vectorestore_random.similarity_search(
+            "product views",
+            k=10,
+            filter={
+                "$and": [
+                    {"views": {"$gt": 100}},
+                    {"active": True},
+                ]
+            },
+        )
+        # Documents with views > 100 AND active=True: B (200, True), D (300, True)
+        assert len(output) == 2
+        names = [doc.metadata.get("name") for doc in output]
+        assert "B" in names
+        assert "D" in names
+
+    def test_filter_typed_dict_or_operator_multiple_conditions(
+        self, vectorestore_random: SingleStoreVectorStore, numeric_docs: List[Document]
+    ) -> None:
+        """Test $or operator to combine multiple conditions with OR logic."""
+        vectorestore_random.add_documents(numeric_docs)
+        output = vectorestore_random.similarity_search(
+            "product",
+            k=10,
+            filter={
+                "$or": [
+                    {"name": "A"},
+                    {"rating": {"$gte": 4.5}},
+                ]
+            },
+        )
+        # Documents where name=A OR rating >= 4.5: A (4.5), D (5.0), B (4.0 - no)
+        assert len(output) >= 2
+        names = [doc.metadata.get("name") for doc in output]
+        assert "A" in names
+        assert "D" in names
+
+    def test_filter_typed_dict_complex_nested_filters(
+        self, vectorestore_random: SingleStoreVectorStore, numeric_docs: List[Document]
+    ) -> None:
+        """Test complex nested $and and $or combinations."""
+        vectorestore_random.add_documents(numeric_docs)
+        output = vectorestore_random.similarity_search(
+            "product views",
+            k=10,
+            filter={
+                "$and": [
+                    {
+                        "$or": [
+                            {"name": "A"},
+                            {"name": "B"},
+                        ]
+                    },
+                    {"views": {"$gte": 150}},
+                ]
+            },
+        )
+        # Documents where (name=A OR name=B) AND views >= 150: B (200)
+        assert len(output) == 1
+        assert output[0].metadata["name"] == "B"
+
+    def test_filter_typed_dict_with_search_strategy(
+        self,
+        vectorestore_incremental: SingleStoreVectorStore,
+        numeric_docs: List[Document],
+    ) -> None:
+        """Test FilterTypedDict with TEXT_ONLY search strategy."""
+        vectorestore_incremental.add_documents(numeric_docs)
+        output = vectorestore_incremental.similarity_search(
+            "product views",
+            k=10,
+            filter={"views": {"$gt": 100}},
+            search_strategy=SingleStoreVectorStore.SearchStrategy.TEXT_ONLY,
+        )
+        # Should work with FilterTypedDict in any search strategy
+        assert len(output) > 0
