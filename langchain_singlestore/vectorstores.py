@@ -23,7 +23,7 @@ from langchain_core.embeddings import Embeddings
 from langchain_core.vectorstores import VectorStore, VectorStoreRetriever
 from sqlalchemy.pool import QueuePool
 
-from langchain_singlestore._utils import DistanceStrategy
+from langchain_singlestore._utils import DistanceStrategy, set_connector_attributes
 
 VST = TypeVar("VST", bound=VectorStore)
 
@@ -271,12 +271,8 @@ class SingleStoreVectorStore(VectorStore):
         # Pass the rest of the kwargs to the connection.
         self.connection_kwargs = kwargs
 
-        # Add program name and version to connection attributes.
-        if "conn_attrs" not in self.connection_kwargs:
-            self.connection_kwargs["conn_attrs"] = dict()
-
-        self.connection_kwargs["conn_attrs"]["_connector_name"] = "langchain python sdk"
-        self.connection_kwargs["conn_attrs"]["_connector_version"] = "3.0.0"
+        # Add connection attributes to the connection kwargs.
+        set_connector_attributes(self.connection_kwargs)
 
         # Create connection pool.
         self.connection_pool = QueuePool(

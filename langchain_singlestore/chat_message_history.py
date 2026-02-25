@@ -14,6 +14,8 @@ from langchain_core.messages import (
 )
 from sqlalchemy.pool import QueuePool
 
+from langchain_singlestore._utils import set_connector_attributes
+
 logger = logging.getLogger(__name__)
 
 
@@ -150,11 +152,7 @@ class SingleStoreChatMessageHistory(BaseChatMessageHistory):
         self.connection_kwargs = kwargs
 
         # Add connection attributes to the connection kwargs.
-        if "conn_attrs" not in self.connection_kwargs:
-            self.connection_kwargs["conn_attrs"] = dict()
-
-        self.connection_kwargs["conn_attrs"]["_connector_name"] = "langchain python sdk"
-        self.connection_kwargs["conn_attrs"]["_connector_version"] = "3.0.0"
+        set_connector_attributes(self.connection_kwargs)
 
         self.connection_pool = QueuePool(
             self._get_connection,

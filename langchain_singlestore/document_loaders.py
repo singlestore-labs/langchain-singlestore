@@ -8,6 +8,8 @@ from langchain_core.document_loaders.base import BaseLoader
 from langchain_core.documents import Document
 from sqlalchemy.pool import QueuePool
 
+from langchain_singlestore._utils import set_connector_attributes
+
 
 class SingleStoreLoader(BaseLoader):
     """SingleStore document loader.
@@ -134,12 +136,8 @@ class SingleStoreLoader(BaseLoader):
         # Pass the rest of the kwargs to the connection.
         self.connection_kwargs = kwargs
 
-        # Add program name and version to connection attributes.
-        if "conn_attrs" not in self.connection_kwargs:
-            self.connection_kwargs["conn_attrs"] = dict()
-
-        self.connection_kwargs["conn_attrs"]["_connector_name"] = "langchain python sdk"
-        self.connection_kwargs["conn_attrs"]["_connector_version"] = "3.0.0"
+        # Add connection attributes to the connection kwargs.
+        set_connector_attributes(self.connection_kwargs)
 
         # Create connection pool.
         self.connection_pool = QueuePool(
