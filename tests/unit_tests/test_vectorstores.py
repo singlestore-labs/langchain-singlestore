@@ -221,7 +221,6 @@ class TestSingleStoreVectorStoreSearchStrategy(unittest.TestCase):
         assert SingleStoreVectorStore.SearchStrategy.VECTOR_ONLY == "VECTOR_ONLY"
         assert SingleStoreVectorStore.SearchStrategy.TEXT_ONLY == "TEXT_ONLY"
         assert SingleStoreVectorStore.SearchStrategy.FILTER_BY_TEXT == "FILTER_BY_TEXT"
-        
 
 
 class TestSingleStoreVectorStoreEmbeddings(unittest.TestCase):

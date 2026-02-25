@@ -26,9 +26,7 @@ class TestSingleStoreSemanticCacheInit(unittest.TestCase):
 
     def setUp(self) -> None:
         """Set up test fixtures."""
-        self.patcher = patch(
-            "langchain_singlestore.cache.SingleStoreVectorStore"
-        )
+        self.patcher = patch("langchain_singlestore.cache.SingleStoreVectorStore")
         self.mock_vs_class = self.patcher.start()
         self.mock_vs = MagicMock()
         self.mock_vs_class.return_value = self.mock_vs
@@ -77,16 +75,14 @@ class TestSingleStoreSemanticCacheInit(unittest.TestCase):
 
         # Store connection kwargs for later use when creating vectorstores
         assert "distance_strategy" in cache.connection_kwargs
-        
+
         assert cache.connection_kwargs
         ["distance_strategy"] == DistanceStrategy.EUCLIDEAN_DISTANCE
 
     def test_init_initializes_cache_dict(self) -> None:
         """Test that cache dict is initialized for lazy vectorstore creation."""
         embeddings = MockEmbeddings()
-        cache = SingleStoreSemanticCache(
-            embedding=embeddings, host="localhost"
-        )
+        cache = SingleStoreSemanticCache(embedding=embeddings, host="localhost")
 
         # Vectorstores are created lazily, not on init
         assert hasattr(cache, "_cache_dict")
@@ -99,9 +95,7 @@ class TestSingleStoreSemanticCacheVectorStoreParams(unittest.TestCase):
 
     def setUp(self) -> None:
         """Set up test fixtures."""
-        self.patcher = patch(
-            "langchain_singlestore.cache.SingleStoreVectorStore"
-        )
+        self.patcher = patch("langchain_singlestore.cache.SingleStoreVectorStore")
         self.mock_vs_class = self.patcher.start()
         self.mock_vs = MagicMock()
         self.mock_vs_class.return_value = self.mock_vs
@@ -180,9 +174,7 @@ class TestSingleStoreSemanticCacheInheritance(unittest.TestCase):
 
     def setUp(self) -> None:
         """Set up test fixtures."""
-        self.patcher = patch(
-            "langchain_singlestore.cache.SingleStoreVectorStore"
-        )
+        self.patcher = patch("langchain_singlestore.cache.SingleStoreVectorStore")
         self.mock_vs_class = self.patcher.start()
         self.mock_vs = MagicMock()
         self.mock_vs_class.return_value = self.mock_vs
@@ -196,9 +188,7 @@ class TestSingleStoreSemanticCacheInheritance(unittest.TestCase):
         from langchain_core.caches import BaseCache
 
         embeddings = MockEmbeddings()
-        cache = SingleStoreSemanticCache(
-            embedding=embeddings, host="localhost"
-        )
+        cache = SingleStoreSemanticCache(embedding=embeddings, host="localhost")
 
         assert isinstance(cache, BaseCache)
 

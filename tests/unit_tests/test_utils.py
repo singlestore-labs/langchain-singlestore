@@ -34,7 +34,7 @@ class TestSetConnectorAttributes(unittest.TestCase):
 
     def test_sets_attributes_in_empty_kwargs(self) -> None:
         """Test setting attributes in empty connection kwargs."""
-        connection_kwargs = {}
+        connection_kwargs: dict[str, dict] = {}
         set_connector_attributes(connection_kwargs)
 
         assert "conn_attrs" in connection_kwargs
@@ -45,7 +45,7 @@ class TestSetConnectorAttributes(unittest.TestCase):
 
     def test_sets_attributes_preserves_existing_attrs(self) -> None:
         """Test that existing conn_attrs are preserved."""
-        connection_kwargs = {"conn_attrs": {"custom_attr": "value"}}
+        connection_kwargs: dict[str, dict] = {"conn_attrs": {"custom_attr": "value"}}
         set_connector_attributes(connection_kwargs)
 
         assert connection_kwargs["conn_attrs"]["custom_attr"] == "value"
@@ -56,14 +56,14 @@ class TestSetConnectorAttributes(unittest.TestCase):
 
     def test_sets_attributes_creates_dict_if_missing(self) -> None:
         """Test that conn_attrs dict is created if missing."""
-        connection_kwargs = {}
+        connection_kwargs: dict[str, dict] = {}
         set_connector_attributes(connection_kwargs)
 
         assert isinstance(connection_kwargs.get("conn_attrs"), dict)
 
     def test_modifies_in_place(self) -> None:
         """Test that function modifies dictionary in place."""
-        connection_kwargs = {}
+        connection_kwargs: dict[str, dict] = {}
         original_id = id(connection_kwargs)
         set_connector_attributes(connection_kwargs)
 

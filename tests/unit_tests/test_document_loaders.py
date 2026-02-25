@@ -58,9 +58,7 @@ class TestSingleStoreLoaderInit(unittest.TestCase):
 
     def test_init_pool_settings(self) -> None:
         """Test that connection pool settings are configured."""
-        SingleStoreLoader(
-            host="localhost", pool_size=10, max_overflow=20, timeout=60
-        )
+        SingleStoreLoader(host="localhost", pool_size=10, max_overflow=20, timeout=60)
 
         # Verify QueuePool was called with correct parameters
         self.mock_pool_class.assert_called_once()
