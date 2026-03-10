@@ -4,6 +4,10 @@ from langchain_singlestore._filter import FilterTypedDict
 from langchain_singlestore.cache import SingleStoreSemanticCache
 from langchain_singlestore.chat_message_history import SingleStoreChatMessageHistory
 from langchain_singlestore.document_loaders import SingleStoreLoader
+from langchain_singlestore.sql_database_retriever import (
+    SingleStoreSQLDatabaseChain,
+    SingleStoreSQLDatabaseRetriever,
+)
 from langchain_singlestore.vectorstores import SingleStoreVectorStore
 
 try:
@@ -18,6 +22,8 @@ __all__ = [
     "SingleStoreSemanticCache",
     "SingleStoreChatMessageHistory",
     "SingleStoreLoader",
+    "SingleStoreSQLDatabaseRetriever",
+    "SingleStoreSQLDatabaseChain",
     "FilterTypedDict",
     "__version__",
 ]

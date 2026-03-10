@@ -24,35 +24,6 @@ The `SingleStoreChatMessageHistory` class provides persistent storage for chat m
 - Efficient message retrieval and storage
 - Easy integration with LangChain chat models
 
-```python
-from langchain_singlestore import SingleStoreChatMessageHistory
-from langchain_core.messages import HumanMessage, AIMessage
-
-# Initialize chat history
-chat_history = SingleStoreChatMessageHistory(
-    host="127.0.0.1:3306/db",
-    table_name="chat_history",
-    session_id="user_123"
-)
-
-# Add messages to the chat history
-chat_history.add_message(HumanMessage(content="Hello, how are you?"))
-chat_history.add_message(AIMessage(content="I'm doing well, thank you for asking!"))
-
-# Retrieve chat history
-messages = chat_history.get_messages()
-for message in messages:
-    print(f"{message.type}: {message.content}")
-
-# Use with a chat chain
-from langchain.chains import LLMChain
-from langchain_openai import ChatOpenAI
-
-llm = ChatOpenAI()
-chain = LLMChain(llm=llm, memory=chat_history)
-response = chain.run(input="What was the last thing we discussed?")
-```
-
 ### Semantic Cache
 
 The `SingleStoreSemanticCache` class implements semantic caching for LLM responses using SingleStore's vector capabilities. Instead of exact string matching, it uses embeddings to find semantically similar cached queries, dramatically reducing API costs and improving performance for similar questions.
@@ -62,33 +33,6 @@ The `SingleStoreSemanticCache` class implements semantic caching for LLM respons
 - Reduces LLM API calls for similar queries
 - Configurable similarity threshold
 - Thread-safe caching operations
-
-```python
-from langchain_singlestore import SingleStoreSemanticCache
-from langchain_core.globals import set_llm_cache
-from langchain_openai import OpenAIEmbeddings, ChatOpenAI
-
-# Configure semantic caching
-set_llm_cache(
-    SingleStoreSemanticCache(
-        embedding=OpenAIEmbeddings(),
-        host="root:pass@localhost:3306/db",
-        table_name="llm_semantic_cache",
-        distance_threshold=0.2  # Similarity threshold
-    )
-)
-
-# Now all LLM calls will use semantic caching
-llm = ChatOpenAI(model="gpt-3.5-turbo")
-
-# First call will invoke the LLM
-response1 = llm.invoke("What is the capital of France?")
-print(response1.content)  # Makes API call
-
-# Similar query will use cached response
-response2 = llm.invoke("What city is the capital of France?")  
-print(response2.content)  # Uses cache - no API call!
-```
 
 ### Vector Store
 
@@ -100,6 +44,27 @@ The `SingleStoreVectorStore` class provides a powerful document storage and retr
 - Simple and advanced metadata filtering
 - Efficient document management (add, delete, update)
 - Configurable distance metrics
+
+### SQL Database Retriever
+
+The `SingleStoreSQLDatabaseRetriever` enables LangChain agents and chains to execute SQL queries directly against SingleStore and retrieve results as structured documents.
+
+**Key Features:**
+- Execute SQL queries and convert results to documents
+- Flexible row-to-document conversion with custom handlers
+- Connection pooling for efficient resource management
+- Integration with LangChain agents for database-aware AI
+- Support for complex queries with JSON results
+
+### Document Loader
+
+The `SingleStoreLoader` class provides efficient loading of documents directly from SingleStore database tables.
+
+**Key Features:**
+- Load documents from any database table
+- Configurable content and metadata fields
+- Efficient batch processing
+- Support for complex metadata structures
 
 #### Basic Usage
 
@@ -302,6 +267,130 @@ chunked_docs = splitter.split_documents(documents)
 
 # Add chunked documents to vector store
 vector_store.add_documents(chunked_docs)
+```
+
+### SQL Database Retriever
+
+The `SingleStoreSQLDatabaseRetriever` enables LangChain agents and chains to execute SQL queries directly against a SingleStore database and retrieve results formatted as documents. This is perfect for building database-aware AI applications that need to query structured data.
+
+**Key Features:**
+- Execute SQL queries and retrieve results as documents
+- Flexible row-to-document conversion with custom handlers
+- Connection pooling for efficient resource management
+- Clean integration with LangChain agents and chains
+- Support for complex queries with JSON results
+
+#### Basic Usage
+
+```python
+from langchain_singlestore import SingleStoreSQLDatabaseRetriever
+
+# Initialize retriever
+retriever = SingleStoreSQLDatabaseRetriever(
+    host="127.0.0.1:3306/db",
+    user="root",
+    password="your_password",
+    database="my_database"
+)
+
+# Execute a query and get results as documents
+docs = retriever.invoke(input="SELECT id, name, email FROM users LIMIT 10")
+
+# Each row becomes a document
+for doc in docs:
+    print(doc.page_content)
+    print(doc.metadata)
+```
+
+#### Using with LangChain Agents
+
+```python
+from langchain_singlestore import SingleStoreSQLDatabaseRetriever
+from langchain.agents import create_tool_use_agent
+from langchain_openai import ChatOpenAI
+
+# Create retriever
+retriever = SingleStoreSQLDatabaseRetriever(
+    host="127.0.0.1:3306/db",
+    user="root",
+    password="your_password",
+    database="my_database"
+)
+
+# Create agent with database query tool
+llm = ChatOpenAI(model="gpt-4")
+
+# Build a tool that executes queries
+def query_database(query: str) -> str:
+    """Execute SQL query and return formatted results."""
+    docs = retriever.invoke(input=query)
+    return "\n\n".join([doc.page_content for doc in docs])
+
+# Use in agent
+agent = create_tool_use_agent(
+    llm,
+    tools=[
+        {
+            "type": "function",
+            "function": {
+                "name": "query_database",
+                "description": "Execute SQL queries against the database",
+                "parameters": {
+                    "type": "object",
+                    "properties": {
+                        "query": {
+                            "type": "string",
+                            "description": "SQL query to execute"
+                        }
+                    }
+                }
+            }
+        }
+    ]
+)
+```
+
+#### Custom Row Conversion
+
+Convert database rows to documents using a custom function:
+
+```python
+from langchain_core.documents import Document
+
+def custom_row_converter(row_dict: dict, row_index: int) -> Document:
+    """Custom converter for database rows."""
+    content = f"Record {row_index}: {row_dict.get('name', 'Unknown')}"
+    metadata = {
+        "index": row_index,
+        "record_id": row_dict.get("id"),
+        "source": "database"
+    }
+    return Document(page_content=content, metadata=metadata)
+
+retriever = SingleStoreSQLDatabaseRetriever(
+    host="127.0.0.1:3306/db",
+    user="root",
+    password="your_password",
+    database="my_database",
+    row_to_document_fn=custom_row_converter
+)
+
+docs = retriever.invoke(input="SELECT id, name FROM customers")
+```
+
+#### Query with Result Limits
+
+```python
+from langchain_singlestore import SingleStoreSQLDatabaseChain
+
+# Execute query with automatic LIMIT
+docs = SingleStoreSQLDatabaseChain.query_to_document(
+    query="SELECT * FROM orders",
+    host="root:password@127.0.0.1:3306/db",
+    row_limit=100  # Automatically adds LIMIT 100
+)
+
+print(f"Retrieved {len(docs)} records")
 ```
 
 For detailed documentation, visit the [LangChain documentation](https://python.langchain.com/).
