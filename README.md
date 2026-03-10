@@ -294,7 +294,7 @@ retriever = SingleStoreSQLDatabaseRetriever(
 )
 
 # Execute a query and get results as documents
-docs = retriever.invoke(input="SELECT id, name, email FROM users LIMIT 10")
+docs = retriever.invoke("SELECT id, name, email FROM users LIMIT 10")
 
 # Each row becomes a document
 for doc in docs:
@@ -323,7 +323,7 @@ llm = ChatOpenAI(model="gpt-4")
 # Build a tool that executes queries
 def query_database(query: str) -> str:
     """Execute SQL query and return formatted results."""
-    docs = retriever.invoke(input=query)
+    docs = retriever.invoke(query)
     return "\n\n".join([doc.page_content for doc in docs])
 
 # Use in agent
@@ -375,7 +375,7 @@ retriever = SingleStoreSQLDatabaseRetriever(
     row_to_document_fn=custom_row_converter
 )
 
-docs = retriever.invoke(input="SELECT id, name FROM customers")
+docs = retriever.invoke("SELECT id, name FROM customers")
 ```
 
 #### Query with Result Limits

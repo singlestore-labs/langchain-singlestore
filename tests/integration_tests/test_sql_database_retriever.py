@@ -205,7 +205,7 @@ class TestSingleStoreSQLDatabaseRetrieverIntegration:
         """Test invoking retriever with input dictionary."""
         try:
             # Test with simple query
-            docs = retriever.invoke(input="SELECT 42 as answer")
+            docs = retriever.invoke("SELECT 42 as answer")
             assert len(docs) > 0
             assert "answer" in docs[0].page_content
         except Exception as e:

@@ -156,14 +156,14 @@ retriever = SingleStoreSQLDatabaseRetriever(
     database="my_db"
 )
 
-docs = retriever.invoke(input="SELECT * FROM users LIMIT 10")
+docs = retriever.invoke("SELECT * FROM users LIMIT 10")
 retriever.close()
 ```
 
 ### With Agent
 ```python
 def query_database(query: str) -> str:
-    return "\n".join([d.page_content for d in retriever.invoke(input=query)])
+    return "\n".join([d.page_content for d in retriever.invoke(query)])
 
 agent = create_tool_use_agent(
     llm,
@@ -276,7 +276,7 @@ results = cursor.fetchall()
 **After:**
 ```python
 retriever = SingleStoreSQLDatabaseRetriever(...)
-docs = retriever.invoke(input=query)
+docs = retriever.invoke(query)
 ```
 
 ## Standards Compliance
