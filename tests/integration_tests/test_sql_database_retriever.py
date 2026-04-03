@@ -18,7 +18,7 @@ from tests.integration_tests.conftest import ConnectionParameters
 def test_connection_params(
     clean_db_connection_parameters: ConnectionParameters,
 ) -> Generator[dict[str, str], None, None]:
-    """Get connection parameters from environment or use defaults."""
+    """Build test connection parameters from the docker-based clean database fixture."""
     yield {
         "host": clean_db_connection_parameters.Host,
         "port": str(clean_db_connection_parameters.Port),
