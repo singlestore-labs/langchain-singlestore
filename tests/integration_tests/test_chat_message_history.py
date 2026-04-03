@@ -3,17 +3,23 @@ import json
 from langchain_core.messages import AIMessage, HumanMessage, message_to_dict
 
 from langchain_singlestore import SingleStoreChatMessageHistory
+from tests.integration_tests.conftest import ConnectionParameters
 
 # Replace these with your SingleStoreDB connection string
-TEST_SINGLESTOREDB_URL = "root:pass@localhost:3306/db"
 
 
-def test_memory_with_message_store() -> None:
+def test_memory_with_message_store(
+    clean_db_connection_parameters: ConnectionParameters,
+) -> None:
     """Test the message store with SingleStoreChatMessageHistory."""
     # setup SingleStoreDB as a message store
     message_history = SingleStoreChatMessageHistory(
         session_id="test-session",
-        host=TEST_SINGLESTOREDB_URL,
+        host=clean_db_connection_parameters.Host,
+        port=clean_db_connection_parameters.Port,
+        user=clean_db_connection_parameters.User,
+        password=clean_db_connection_parameters.Password,
+        database=clean_db_connection_parameters.Database,
     )
 
     # add some messages

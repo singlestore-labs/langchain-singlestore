@@ -1,7 +1,6 @@
 """Integration tests for SingleStore SQL Database Retriever."""
 
 import json
-import os
 from typing import Generator
 from unittest.mock import MagicMock
 
@@ -12,16 +11,20 @@ from langchain_singlestore.sql_database_retriever import (
     SingleStoreSQLDatabaseChain,
     SingleStoreSQLDatabaseRetriever,
 )
+from tests.integration_tests.conftest import ConnectionParameters
 
 
 @pytest.fixture
-def test_connection_params() -> Generator[dict[str, str], None, None]:
-    """Get connection parameters from environment or use defaults."""
+def test_connection_params(
+    clean_db_connection_parameters: ConnectionParameters,
+) -> Generator[dict[str, str], None, None]:
+    """Build test connection parameters from the docker-based clean database fixture."""
     yield {
-        "host": os.getenv("SINGLESTORE_HOST", "localhost:3306"),
-        "user": os.getenv("SINGLESTORE_USER", "root"),
-        "password": os.getenv("SINGLESTORE_PASSWORD", "pass"),
-        "database": os.getenv("SINGLESTORE_DATABASE", "db"),
+        "host": clean_db_connection_parameters.Host,
+        "port": str(clean_db_connection_parameters.Port),
+        "user": clean_db_connection_parameters.User,
+        "password": clean_db_connection_parameters.Password,
+        "database": clean_db_connection_parameters.Database,
     }
 
 
@@ -265,7 +268,7 @@ class TestSingleStoreSQLDatabaseChainIntegration:
         try:
             retriever = SingleStoreSQLDatabaseChain.from_url(
                 host=f"{test_connection_params['user']}:{test_connection_params['password']}"
-                f"@{test_connection_params['host']}/{test_connection_params['database']}",
+                f"@{test_connection_params['host']}:{test_connection_params['port']}/{test_connection_params['database']}",
                 llm=None,
             )
 

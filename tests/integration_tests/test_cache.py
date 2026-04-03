@@ -9,8 +9,7 @@ from langchain_core.language_models.fake import FakeListLLM
 from langchain_core.outputs import Generation
 
 from langchain_singlestore.cache import SingleStoreSemanticCache
-
-TEST_SINGLESTOREDB_URL = "root:pass@localhost:3306/db"
+from tests.integration_tests.conftest import ConnectionParameters
 
 
 def create_llm_string(llm: BaseLLM) -> str:
@@ -19,14 +18,20 @@ def create_llm_string(llm: BaseLLM) -> str:
     return str(sorted([(k, v) for k, v in _dict.items()]))
 
 
-def test_tinglestoredb_semantic_cache() -> None:
+def test_singlestoredb_semantic_cache(
+    clean_db_connection_parameters: ConnectionParameters,
+) -> None:
     prompt = "How are you?"
     response = "Test response"
     cached_response = "Cached test response"
     set_llm_cache(
         SingleStoreSemanticCache(
             DeterministicFakeEmbedding(size=10),
-            host=TEST_SINGLESTOREDB_URL,
+            host=clean_db_connection_parameters.Host,
+            port=clean_db_connection_parameters.Port,
+            user=clean_db_connection_parameters.User,
+            password=clean_db_connection_parameters.Password,
+            database=clean_db_connection_parameters.Database,
         )
     )
     llm = FakeListLLM(responses=[response])
