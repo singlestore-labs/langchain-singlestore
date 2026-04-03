@@ -4,10 +4,10 @@ from langchain_core.embeddings.fake import FakeEmbeddings
 from langchain_singlestore.document_loaders import SingleStoreLoader
 from langchain_singlestore.vectorstores import SingleStoreVectorStore
 
-TEST_SINGLESTOREDB_URL = "root:pass@localhost:3306/db"
+from tests.integration_tests.conftest import TEST_DB_NAME
 
 
-def test_singlestore_document_loader() -> None:
+def test_singlestore_document_loader(clean_db_url: str) -> None:
     # Define test documents
     documents = [
         Document(page_content="Document 1 content", metadata={"author": "Author 1"}),
@@ -17,14 +17,16 @@ def test_singlestore_document_loader() -> None:
     # Write documents using SingleStoreVectorStore
     vector_store = SingleStoreVectorStore(
         embedding=FakeEmbeddings(size=10),
-        host=TEST_SINGLESTOREDB_URL,
+        host=clean_db_url,
+        database=TEST_DB_NAME,
         table_name="test_documents",
     )
     vector_store.add_documents(documents)
 
     # Read documents using SingleStoreLoader
     loader = SingleStoreLoader(
-        host=TEST_SINGLESTOREDB_URL,
+        host=clean_db_url,
+        database=TEST_DB_NAME,
         table_name="test_documents",
         content_field="content",
         metadata_field="metadata",

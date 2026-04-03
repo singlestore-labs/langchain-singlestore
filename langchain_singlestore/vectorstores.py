@@ -25,11 +25,12 @@ from langchain_core.vectorstores import VectorStore, VectorStoreRetriever
 from sqlalchemy.pool import QueuePool
 
 from langchain_singlestore._filter import FilterTypedDict, _parse_filter
-from langchain_singlestore._utils import DistanceStrategy, set_connector_attributes
+from langchain_singlestore._utils import DistanceStrategy, FullTextIndexVersion, set_connector_attributes
 
 VST = TypeVar("VST", bound=VectorStore)
 
 DEFAULT_DISTANCE_STRATEGY = DistanceStrategy.DOT_PRODUCT
+DEFAULT_FULL_TEXT_INDEX_VERSION = FullTextIndexVersion.V1
 
 ORDERING_DIRECTIVE: dict = {
     DistanceStrategy.EUCLIDEAN_DISTANCE: "",
@@ -162,6 +163,7 @@ class SingleStoreVectorStore(VectorStore):
         vector_index_options: Optional[dict] = None,
         vector_size: int = 1536,
         use_full_text_search: bool = False,
+        full_text_index_version: FullTextIndexVersion = DEFAULT_FULL_TEXT_INDEX_VERSION,
         pool_size: int = 5,
         max_overflow: int = 10,
         timeout: float = 30,
@@ -224,6 +226,16 @@ class SingleStoreVectorStore(VectorStore):
                 FILTER_BY_TEXT, FILTER_BY_VECTOR, and WIGHTED_SUM search strategies.
                 If set to False, the simularity_search method will only allow
                 VECTOR_ONLY search strategy.
+            
+            full_text_index_version (FullTextIndexVersion, optional): Specifies the
+                version of the full-text index to use. Defaults to V1. This parameter has
+                effect only if use_full_text_search is set to True. Available options are:
+                - V1: Uses the original full-text index implementation. This version is
+                    compatible with all SingleStore versions that support full-text search.
+                - V2: Uses the new full-text index implementation that is available in
+                    SingleStore 8.7 and later. This version offers improved performance and
+                    additional features, but is not compatible with SingleStore versions
+                    prior to 8.7.
 
             Following arguments pertain to the connection pool:
 
@@ -356,6 +368,7 @@ class SingleStoreVectorStore(VectorStore):
         self.vector_size = int(vector_size)
 
         self.use_full_text_search = bool(use_full_text_search)
+        self.full_text_index_version = full_text_index_version
 
         # Pass the rest of the kwargs to the connection.
         self.connection_kwargs = kwargs
@@ -391,7 +404,10 @@ class SingleStoreVectorStore(VectorStore):
             try:
                 full_text_index = ""
                 if self.use_full_text_search:
-                    full_text_index = ", FULLTEXT({})".format(self.content_field)
+                    if self.full_text_index_version == FullTextIndexVersion.V2:
+                        full_text_index = ", FULLTEXT USING VERSION 2 ({})".format(self.content_field)
+                    else:
+                        full_text_index = ", FULLTEXT({})".format(self.content_field)
                 if self.use_vector_index:
                     index_options = ""
                     if self.vector_index_options and len(self.vector_index_options) > 0:
@@ -872,10 +888,15 @@ class SingleStoreVectorStore(VectorStore):
             arguments = []
 
             if search_strategy == SingleStoreVectorStore.SearchStrategy.FILTER_BY_TEXT:
+                match_arg = self.content_field
+                if self.full_text_index_version == FullTextIndexVersion.V1:
+                    where_clause_values.append(query)
+                else:
+                    where_clause_values.append("{}:({})".format(self.content_field, query))
+                    match_arg = "TABLE {}".format(self.table_name)
                 arguments.append(
-                    "MATCH ({}) AGAINST (%s) > %s".format(self.content_field)
+                    "MATCH ({}) AGAINST (%s) > %s".format(match_arg)
                 )
-                where_clause_values.append(query)
                 where_clause_values.append(float(filter_threshold))
 
             if (
@@ -919,6 +940,20 @@ class SingleStoreVectorStore(VectorStore):
                         search_options = "SEARCH_OPTIONS '{\"k\":%d}'" % (
                             k * vector_select_count_multiplier
                         )
+                    sql_query = """SELECT {}, {}, {}, {}({}, JSON_ARRAY_PACK(%s)) as __score
+                        FROM {} {} ORDER BY __score {}{} LIMIT %s""".format(
+                            self.content_field,
+                            self.metadata_field,
+                            self.id_field,
+                            self.distance_strategy.name
+                            if isinstance(self.distance_strategy, DistanceStrategy)
+                            else self.distance_strategy,
+                            self.vector_field,
+                            self.table_name,
+                            where_clause,
+                            search_options,
+                            ORDERING_DIRECTIVE[self.distance_strategy],
+                        ) % (("[{}]".format(",".join(map(str, embedding))),) + tuple(where_clause_values) + (k,))
                     cur.execute(
                         """SELECT {}, {}, {}, {}({}, JSON_ARRAY_PACK(%s)) as __score
                         FROM {} {} ORDER BY __score {}{} LIMIT %s""".format(
@@ -944,22 +979,33 @@ class SingleStoreVectorStore(VectorStore):
                     or search_strategy
                     == SingleStoreVectorStore.SearchStrategy.TEXT_ONLY
                 ):
+                    full_text_query = query
+                    match_arg = self.content_field
+                    if self.full_text_index_version != FullTextIndexVersion.V1:
+                        match_arg = "TABLE {}".format(self.table_name)
+                        full_text_query = "{}:({})".format(self.content_field, query)
+
                     cur.execute(
                         """SELECT {}, {}, {}, MATCH ({}) AGAINST (%s) as __score
                         FROM {} {} ORDER BY __score DESC LIMIT %s""".format(
                             self.content_field,
                             self.metadata_field,
                             self.id_field,
-                            self.content_field,
+                            match_arg,
                             self.table_name,
                             where_clause,
                         ),
-                        (query,) + tuple(where_clause_values) + (k,),
+                        (full_text_query,) + tuple(where_clause_values) + (k,),
                     )
                 elif (
                     search_strategy
                     == SingleStoreVectorStore.SearchStrategy.WEIGHTED_SUM
                 ):
+                    full_text_query = query
+                    match_arg = self.content_field
+                    if self.full_text_index_version != FullTextIndexVersion.V1:
+                        full_text_query = "{}:({})".format(self.content_field, query)
+                        match_arg = "TABLE {}".format(self.table_name)
                     cur.execute(
                         """SELECT {}, {}, r1.{} as {}, __score1 * %s + __score2 * %s
                         as __score FROM (
@@ -975,7 +1021,7 @@ class SingleStoreVectorStore(VectorStore):
                             self.id_field,
                             self.content_field,
                             self.metadata_field,
-                            self.content_field,
+                            match_arg,
                             self.table_name,
                             where_clause,
                             self.id_field,
@@ -990,7 +1036,7 @@ class SingleStoreVectorStore(VectorStore):
                             self.id_field,
                             ORDERING_DIRECTIVE[self.distance_strategy],
                         ),
-                        (text_weight, vector_weight, query)
+                        (text_weight, vector_weight, full_text_query)
                         + tuple(where_clause_values)
                         + ("[{}]".format(",".join(map(str, embedding))),)
                         + tuple(where_clause_values)

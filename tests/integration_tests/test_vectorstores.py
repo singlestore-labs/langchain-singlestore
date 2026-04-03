@@ -11,11 +11,10 @@ from langchain_core.vectorstores import VectorStore
 from langchain_experimental.open_clip import OpenCLIPEmbeddings
 from langchain_tests.integration_tests import VectorStoreIntegrationTests
 
-from langchain_singlestore._utils import DistanceStrategy
+from langchain_singlestore._utils import DistanceStrategy, FullTextIndexVersion
 from langchain_singlestore.vectorstores import SingleStoreVectorStore
 
-TEST_SINGLESTOREDB_URL = "root:pass@localhost:3306/db"
-
+from tests.integration_tests.conftest import TEST_DB_NAME, ConnectionParameters
 
 class RandomEmbeddings(Embeddings):
     """Fake embeddings with random vectors. For testing purposes."""
@@ -57,7 +56,9 @@ class TestSingleStoreVectorStore(VectorStoreIntegrationTests):
     @pytest.fixture(
         params=[DistanceStrategy.DOT_PRODUCT, DistanceStrategy.EUCLIDEAN_DISTANCE]
     )
-    def vectorstore(self, request) -> Generator[VectorStore, None, None]:  # type: ignore
+    def vectorstore(self,
+                    request: pytest.FixtureRequest,
+                    clean_db_url: str) -> Generator[VectorStore, None, None]:  # type: ignore
         """Get an empty vectorstore for unit tests."""
         # note: store should be EMPTY at this point
         # if you need to delete data, you may do so here
@@ -65,7 +66,8 @@ class TestSingleStoreVectorStore(VectorStoreIntegrationTests):
             store = SingleStoreVectorStore(
                 self.get_embeddings(),
                 distance_strategy=request.param,
-                host=TEST_SINGLESTOREDB_URL,
+                host=clean_db_url,
+                database=TEST_DB_NAME,
             )
             yield store
             store.drop()
@@ -85,7 +87,8 @@ class TestSingleStoreVectorStore(VectorStoreIntegrationTests):
         ]
     )
     def vectorstore_with_vector_index(
-        self, request: pytest.FixtureRequest
+        self, request: pytest.FixtureRequest,
+        clean_db_url: str,
     ) -> Generator[VectorStore, None, None]:
         """Get an empty vectorstore with vector index for unit tests."""
         # note: store should be EMPTY at this point
@@ -97,7 +100,8 @@ class TestSingleStoreVectorStore(VectorStoreIntegrationTests):
                 vector_size=request.param[1],
                 vector_index_options=request.param[2],
                 embedding=RandomEmbeddings(request.param[1]),
-                host=TEST_SINGLESTOREDB_URL,
+                host=clean_db_url,
+                database=TEST_DB_NAME,
             )
             yield store
             store.drop()
@@ -106,13 +110,15 @@ class TestSingleStoreVectorStore(VectorStoreIntegrationTests):
             pass
 
     @pytest.fixture()
-    def vectorestore_random(self) -> Generator[SingleStoreVectorStore, None, None]:
+    def vectorestore_random(self, clean_db_url: str) -> Generator[SingleStoreVectorStore, None, None]:
         """Get an empty vectorstore with random embeddings for unit tests."""
         # note: store should be EMPTY at this point
         # if you need to delete data, you may do so here
         try:
             store = SingleStoreVectorStore(
-                embedding=RandomEmbeddings(10), host=TEST_SINGLESTOREDB_URL
+                embedding=RandomEmbeddings(10),
+                host=clean_db_url,
+                database=TEST_DB_NAME,
             )
             yield store
             store.drop()
@@ -120,22 +126,28 @@ class TestSingleStoreVectorStore(VectorStoreIntegrationTests):
             # cleanup operations, or deleting data
             pass
 
-    @pytest.fixture()
-    def vectorestore_incremental(self) -> Generator[SingleStoreVectorStore, None, None]:
+    @pytest.fixture(
+            params=[FullTextIndexVersion.V1, FullTextIndexVersion.V2]
+    )
+    def vectorestore_incremental(self, request: pytest.FixtureRequest, clean_db_url: str
+                                 ) -> Generator[SingleStoreVectorStore, None, None]:
         """Get an empty vectorstore with incremental embeddings for unit tests."""
         # note: store should be EMPTY at this point
         # if you need to delete data, you may do so here
         try:
             store = SingleStoreVectorStore(
                 embedding=IncrementalEmbeddings(),
-                host=TEST_SINGLESTOREDB_URL,
+                host=clean_db_url,
+                database=TEST_DB_NAME,
                 use_full_text_search=True,
+                full_text_index_version=request.param,
             )
             yield store
             store.drop()
         finally:
             # cleanup operations, or deleting data
             pass
+
 
     @pytest.fixture()
     def snow_rain_docs(self) -> List[Document]:
@@ -407,14 +419,18 @@ class TestSingleStoreVectorStore(VectorStoreIntegrationTests):
         assert len(output) == 1
         assert output[0].page_content in temp_files
 
-    def test_add_image2(self) -> None:
+    def test_add_image2(self, clean_db_connection_parameters: ConnectionParameters) -> None:
         docsearch = SingleStoreVectorStore(
             OpenCLIPEmbeddings(
                 model=None,
                 preprocess=None,
                 tokenizer=None,
             ),
-            host=TEST_SINGLESTOREDB_URL,
+            host=clean_db_connection_parameters.Host,
+            port=clean_db_connection_parameters.Port,
+            user=clean_db_connection_parameters.User,
+            password=clean_db_connection_parameters.Password,
+            database=clean_db_connection_parameters.Database,
         )
         IMAGES_DIR = "tests/integration_tests/images"
         image_uris = sorted(
@@ -457,11 +473,14 @@ class TestSingleStoreVectorStore(VectorStoreIntegrationTests):
         self, vectorestore_incremental: VectorStore, snow_rain_docs: List[Document]
     ) -> None:
         vectorestore_incremental.add_documents(snow_rain_docs)
+        threshold = 0
+        if vectorestore_incremental.full_text_index_version == FullTextIndexVersion.V2:
+            threshold = 1
         output = vectorestore_incremental.similarity_search(
             "rainstorm in parched desert",
             k=1,
             search_strategy=SingleStoreVectorStore.SearchStrategy.FILTER_BY_TEXT,
-            filter_threshold=0,
+            filter_threshold=threshold,
         )
         assert len(output) == 1
         assert "In the parched desert" in output[0].page_content
@@ -470,12 +489,15 @@ class TestSingleStoreVectorStore(VectorStoreIntegrationTests):
         self, vectorestore_incremental: VectorStore, snow_rain_docs: List[Document]
     ) -> None:
         vectorestore_incremental.add_documents(snow_rain_docs)
+        threshold = -0.2
+        if vectorestore_incremental.full_text_index_version == FullTextIndexVersion.V2:
+            threshold = 0.2
         output = vectorestore_incremental.similarity_search(
             "rainstorm in parched desert, rain",
             k=1,
             filter={"category": "rain"},
             search_strategy=SingleStoreVectorStore.SearchStrategy.FILTER_BY_VECTOR,
-            filter_threshold=-0.2,
+            filter_threshold=threshold,
         )
         assert len(output) == 1
         assert "High in the mountains" in output[0].page_content
@@ -496,6 +518,7 @@ class TestSingleStoreVectorStore(VectorStoreIntegrationTests):
 
     def test_singlestoredb_weighted_sum_search_unsupported_strategy(
         self,
+        clean_db_url: str,
         snow_rain_docs: List[Document],
     ) -> None:
         docsearch = SingleStoreVectorStore.from_documents(
@@ -504,7 +527,8 @@ class TestSingleStoreVectorStore(VectorStoreIntegrationTests):
             use_full_text_search=True,
             use_vector_index=True,
             vector_size=2,
-            host=TEST_SINGLESTOREDB_URL,
+            host=clean_db_url,
+            database=TEST_DB_NAME,
             distance_strategy=DistanceStrategy.EUCLIDEAN_DISTANCE,
         )
         try:
@@ -810,3 +834,20 @@ class TestSingleStoreVectorStore(VectorStoreIntegrationTests):
         )
         # Should work with FilterTypedDict in any search strategy
         assert len(output) > 0
+    
+    def test_fulltext_index_version_creation(self,
+                                            vectorestore_incremental: VectorStore) -> None:
+        """Test that full-text index is created when use_full_text_search is True."""
+        conn = vectorestore_incremental._get_connection()
+        
+        with conn.cursor() as cur:
+            cur.execute("SHOW CREATE TABLE embeddings")
+            result = cur.fetchone()
+            assert result is not None
+            create_table_sql = result[1]  # The second column contains the SQL
+            if vectorestore_incremental.full_text_index_version == FullTextIndexVersion.V1:
+                assert "FULLTEXT USING VERSION 1" in create_table_sql
+            elif vectorestore_incremental.full_text_index_version == FullTextIndexVersion.V2:
+                assert "FULLTEXT USING VERSION 2" in create_table_sql
+            else:
+                raise ValueError("Unexpected full text index version")

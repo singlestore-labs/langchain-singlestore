@@ -46,6 +46,12 @@ class DistanceStrategy(str, Enum):
     DOT_PRODUCT = "DOT_PRODUCT"
 
 
+class FullTextIndexVersion(str, Enum):
+    """Enumerator of the Full-Text Index versions"""
+
+    V1 = "V1"
+    V2 = "V2"
+
 def hash(_input: str) -> str:
     """Use a deterministic hashing approach."""
     return hashlib.md5(_input.encode()).hexdigest()
