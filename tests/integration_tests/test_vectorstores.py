@@ -56,9 +56,9 @@ class TestSingleStoreVectorStore(VectorStoreIntegrationTests):
     @pytest.fixture(
         params=[DistanceStrategy.DOT_PRODUCT, DistanceStrategy.EUCLIDEAN_DISTANCE]
     )
-    def vectorstore(
+    def vectorstore(  # type: ignore[override]
         self, request: pytest.FixtureRequest, clean_db_url: str
-    ) -> Generator[VectorStore, None, None]:  # type: ignore
+    ) -> Generator[VectorStore, None, None]:
         """Get an empty vectorstore for unit tests."""
         # note: store should be EMPTY at this point
         # if you need to delete data, you may do so here
@@ -195,9 +195,7 @@ class TestSingleStoreVectorStore(VectorStoreIntegrationTests):
         ]
 
     @pytest.mark.xfail(reason="id should be integer")
-    def test_add_documents_with_existing_ids(
-        self, vectorstore: VectorStore
-    ) -> None:
+    def test_add_documents_with_existing_ids(self, vectorstore: VectorStore) -> None:
         """Test that add_documents with existing IDs is idempotent.
 
         .. dropdown:: Troubleshooting
@@ -381,9 +379,7 @@ class TestSingleStoreVectorStore(VectorStoreIntegrationTests):
             ),
         ]
         vectorstore.add_documents(documents)
-        output = vectorstore.similarity_search(
-            "foo", k=1, filter={"is_good": True}
-        )
+        output = vectorstore.similarity_search("foo", k=1, filter={"is_good": True})
         assert len(output) == 1
         assert output[0].page_content == "bar"
         assert output[0].metadata["category"] == "budget"
@@ -477,7 +473,9 @@ class TestSingleStoreVectorStore(VectorStoreIntegrationTests):
         assert "Blanketing the countryside" in output[0].page_content
 
     def test_singlestoredb_filter_by_text_search(
-        self, vectorestore_incremental: VectorStore, snow_rain_docs: List[Document]
+        self,
+        vectorestore_incremental: SingleStoreVectorStore,
+        snow_rain_docs: List[Document],
     ) -> None:
         vectorestore_incremental.add_documents(snow_rain_docs)
         threshold = 0
@@ -493,7 +491,9 @@ class TestSingleStoreVectorStore(VectorStoreIntegrationTests):
         assert "In the parched desert" in output[0].page_content
 
     def test_singlestoredb_filter_by_vector_search1(
-        self, vectorestore_incremental: VectorStore, snow_rain_docs: List[Document]
+        self,
+        vectorestore_incremental: SingleStoreVectorStore,
+        snow_rain_docs: List[Document],
     ) -> None:
         vectorestore_incremental.add_documents(snow_rain_docs)
         threshold = -0.2
@@ -843,7 +843,7 @@ class TestSingleStoreVectorStore(VectorStoreIntegrationTests):
         assert len(output) > 0
 
     def test_fulltext_index_version_creation(
-        self, vectorestore_incremental: VectorStore
+        self, vectorestore_incremental: SingleStoreVectorStore
     ) -> None:
         """Test that full-text index is created when use_full_text_search is True."""
         conn = vectorestore_incremental._get_connection()
@@ -933,9 +933,6 @@ class TestSingleStoreVectorStore(VectorStoreIntegrationTests):
                 search_strategy=SingleStoreVectorStore.SearchStrategy.TEXT_ONLY,
             )
             assert len(textResults) == 1
-            assert (
-                "가뭄이 든 사막에 갑작스러운"
-                in textResults[0].page_content
-            )
+            assert "가뭄이 든 사막에 갑작스러운" in textResults[0].page_content
         finally:
             docsearch.drop()
