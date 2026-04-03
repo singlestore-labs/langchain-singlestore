@@ -226,9 +226,9 @@ class SingleStoreVectorStore(VectorStore):
             use_full_text_search (bool, optional): Toggles the use a full-text index
                 on the document content. Defaults to False. If set to True, the table
                 will be created with a full-text index on the content field,
-                and the simularity_search method will all using TEXT_ONLY,
-                FILTER_BY_TEXT, FILTER_BY_VECTOR, and WIGHTED_SUM search strategies.
-                If set to False, the simularity_search method will only allow
+                and the similarity_search method will allow using TEXT_ONLY,
+                FILTER_BY_TEXT, FILTER_BY_VECTOR, and WEIGHTED_SUM search strategies.
+                If set to False, the similarity_search method will only allow
                 VECTOR_ONLY search strategy.
 
             full_text_index_version (FullTextIndexVersion, optional): Specifies the
@@ -1125,9 +1125,9 @@ class SingleStoreVectorStore(VectorStore):
             use_full_text_search (bool, optional): Toggles the use a full-text index
                 on the document content. Defaults to False. If set to True, the table
                 will be created with a full-text index on the content field,
-                and the simularity_search method will all using TEXT_ONLY,
-                FILTER_BY_TEXT, FILTER_BY_VECTOR, and WIGHTED_SUM search strategies.
-                If set to False, the simularity_search method will only allow
+                and the similarity_search method will allow using TEXT_ONLY,
+                FILTER_BY_TEXT, FILTER_BY_VECTOR, and WEIGHTED_SUM search strategies.
+                If set to False, the similarity_search method will only allow
                 VECTOR_ONLY search strategy.
 
             pool_size (int, optional): Determines the number of active connections in
