@@ -18,7 +18,7 @@ def create_llm_string(llm: BaseLLM) -> str:
     return str(sorted([(k, v) for k, v in _dict.items()]))
 
 
-def test_tinglestoredb_semantic_cache(
+def test_singlestoredb_semantic_cache(
     clean_db_connection_parameters: ConnectionParameters,
 ) -> None:
     prompt = "How are you?"
