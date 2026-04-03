@@ -1067,6 +1067,7 @@ class SingleStoreVectorStore(VectorStore):
         vector_index_options: Optional[dict] = None,
         vector_size: int = 1536,
         use_full_text_search: bool = False,
+        full_text_index_version: FullTextIndexVersion = DEFAULT_FULL_TEXT_INDEX_VERSION,
         pool_size: int = 5,
         max_overflow: int = 10,
         timeout: float = 30,
@@ -1129,6 +1130,19 @@ class SingleStoreVectorStore(VectorStore):
                 FILTER_BY_TEXT, FILTER_BY_VECTOR, and WEIGHTED_SUM search strategies.
                 If set to False, the similarity_search method will only allow
                 VECTOR_ONLY search strategy.
+            full_text_index_version (FullTextIndexVersion, optional): Determines the
+                version of the full-text index to use. Defaults to V1.
+                Available options are:
+                - V1: Uses the original full-text index implementation. This version
+                    is compatible with all versions of SingleStore, but does not
+                    support some of the advanced features of the full-text search,
+                    such as boolean mode and query expansion.
+                - V2: Uses the new full-text index implementation introduced in
+                    SingleStore 8.7. This version offers improved performance and
+                    additional features, but is only compatible with SingleStore 8.7
+                    or later. If use_full_text_search is set to True and the
+                    SingleStore version is 8.7 or later, this will be used as the
+                    default value.
 
             pool_size (int, optional): Determines the number of active connections in
                 the pool. Defaults to 5.
@@ -1194,6 +1208,7 @@ class SingleStoreVectorStore(VectorStore):
             vector_index_options=vector_index_options,
             vector_size=vector_size,
             use_full_text_search=use_full_text_search,
+            full_text_index_version=full_text_index_version,
             **kwargs,
         )
         instance.add_texts(texts, metadatas, embedding.embed_documents(texts), **kwargs)
