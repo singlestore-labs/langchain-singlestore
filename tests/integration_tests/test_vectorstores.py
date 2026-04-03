@@ -851,3 +851,59 @@ class TestSingleStoreVectorStore(VectorStoreIntegrationTests):
                 assert "FULLTEXT USING VERSION 2" in create_table_sql
             else:
                 raise ValueError("Unexpected full text index version")
+    
+    def test_fulltext_search_korean(self, clean_db_connection_parameters: ConnectionParameters) -> None:
+        """Test that full-text search works with Korean text."""
+        docsearch = SingleStoreVectorStore(
+            embedding=IncrementalEmbeddings(),
+            host=clean_db_connection_parameters.Host,
+            port=clean_db_connection_parameters.Port,
+            user=clean_db_connection_parameters.User,
+            password=clean_db_connection_parameters.Password,
+            database=clean_db_connection_parameters.Database,
+            use_full_text_search=True,
+            full_text_index_version=FullTextIndexVersion.V2,
+        )
+        try:
+            docs = [
+                Document(
+                    page_content="""가뭄이 든 사막에 갑작스러운 폭우가 찾아와 안도감을 선사했습니다.
+                    메마른 땅 위로 빗방울이 춤을 추듯 떨어지며, 대지는 감미로운 흙 내음을 풍기며 활력을 되찾았습니다.""",
+                    metadata={"category": "비"},
+                ),
+                Document(
+                    page_content="""번화한 도시 한복판에서 비가 끊임없이 쏟아졌습니다.
+                    보도에 부딪히는 빗소리가 교향곡처럼 울려 퍼졌고, 회색빛 도심 속에는 알록달록한 우산들이 마치 꽃처럼 피어났습니다.""",
+                    metadata={"category": "비"},
+                ),
+                Document(
+                    page_content="""높은 산맥 위로 비가 부드러운 안개로 변해 봉우리들을 신비로운 베일로 감싸 안았습니다.
+                    빗방울 하나하나가 아래에 놓인 고대의 바위들에게 비밀을 속삭이는 듯했습니다.""",
+                    metadata={"category": "비"},
+                ),
+                Document(
+                    page_content="""눈이 시골 풍경을 하얗고 깨끗하게 덮으며 평온한 장면을 연출했습니다.
+                    나뭇가지마다 내려앉은 섬세한 눈송이들은 마치 자연이 만든 레이스 같았고, 세상은 고요한 정적 속에 잠겼습니다.""",
+                    metadata={"category": "눈"},
+                ),
+                Document(
+                    page_content="""도심 속으로 눈이 내리며 번잡했던 거리들이 겨울의 동화 속 나라로 변했습니다.
+                    흩날리는 눈발 사이로 눈싸움을 하는 아이들의 웃음소리가 울려 퍼졌고, 연말의 전등불은 반짝였습니다.""",
+                    metadata={"category": "눈"},
+                ),
+                Document(
+                    page_content="""험준한 산봉우리 위로 눈이 거세게 쏟아지며 대지를 순백의 알프스 낙원으로 빚어냈습니다.
+                    얼어붙은 결정체들이 달빛 아래 영롱하게 빛나며, 아래에 펼쳐진 황야에 마법 같은 황홀함을 선사했습니다.""",
+                    metadata={"category": "눈"},
+                ),
+            ]
+            docsearch.add_documents(docs)
+            textResults = docsearch.similarity_search(
+                "메마른 사막의 폭우, 비",
+                k=1,
+                search_strategy=SingleStoreVectorStore.SearchStrategy.TEXT_ONLY,
+            )
+            assert len(textResults) == 1
+            assert "가뭄이 든 사막에 갑작스러운 폭우가 찾아와 안도감을 선사했습니다." in textResults[0].page_content
+        finally:
+            docsearch.drop()
