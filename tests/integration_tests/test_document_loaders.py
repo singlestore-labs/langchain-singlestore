@@ -3,7 +3,6 @@ from langchain_core.embeddings.fake import FakeEmbeddings
 
 from langchain_singlestore.document_loaders import SingleStoreLoader
 from langchain_singlestore.vectorstores import SingleStoreVectorStore
-
 from tests.integration_tests.conftest import TEST_DB_NAME
 
 

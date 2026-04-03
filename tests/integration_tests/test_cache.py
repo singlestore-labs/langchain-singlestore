@@ -9,8 +9,8 @@ from langchain_core.language_models.fake import FakeListLLM
 from langchain_core.outputs import Generation
 
 from langchain_singlestore.cache import SingleStoreSemanticCache
-
 from tests.integration_tests.conftest import ConnectionParameters
+
 
 def create_llm_string(llm: BaseLLM) -> str:
     _dict: Dict = llm.dict()
@@ -18,7 +18,9 @@ def create_llm_string(llm: BaseLLM) -> str:
     return str(sorted([(k, v) for k, v in _dict.items()]))
 
 
-def test_tinglestoredb_semantic_cache(clean_db_connection_parameters: ConnectionParameters) -> None:
+def test_tinglestoredb_semantic_cache(
+    clean_db_connection_parameters: ConnectionParameters,
+) -> None:
     prompt = "How are you?"
     response = "Test response"
     cached_response = "Cached test response"

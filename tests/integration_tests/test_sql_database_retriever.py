@@ -1,7 +1,6 @@
 """Integration tests for SingleStore SQL Database Retriever."""
 
 import json
-import os
 from typing import Generator
 from unittest.mock import MagicMock
 
@@ -16,7 +15,9 @@ from tests.integration_tests.conftest import ConnectionParameters
 
 
 @pytest.fixture
-def test_connection_params(clean_db_connection_parameters: ConnectionParameters) -> Generator[dict[str, str], None, None]:
+def test_connection_params(
+    clean_db_connection_parameters: ConnectionParameters,
+) -> Generator[dict[str, str], None, None]:
     """Get connection parameters from environment or use defaults."""
     yield {
         "host": clean_db_connection_parameters.Host,

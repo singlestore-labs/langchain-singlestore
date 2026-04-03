@@ -13,8 +13,8 @@ from langchain_tests.integration_tests import VectorStoreIntegrationTests
 
 from langchain_singlestore._utils import DistanceStrategy, FullTextIndexVersion
 from langchain_singlestore.vectorstores import SingleStoreVectorStore
-
 from tests.integration_tests.conftest import TEST_DB_NAME, ConnectionParameters
+
 
 class RandomEmbeddings(Embeddings):
     """Fake embeddings with random vectors. For testing purposes."""
@@ -56,9 +56,9 @@ class TestSingleStoreVectorStore(VectorStoreIntegrationTests):
     @pytest.fixture(
         params=[DistanceStrategy.DOT_PRODUCT, DistanceStrategy.EUCLIDEAN_DISTANCE]
     )
-    def vectorstore(self,
-                    request: pytest.FixtureRequest,
-                    clean_db_url: str) -> Generator[VectorStore, None, None]:  # type: ignore
+    def vectorstore(
+        self, request: pytest.FixtureRequest, clean_db_url: str
+    ) -> Generator[VectorStore, None, None]:  # type: ignore
         """Get an empty vectorstore for unit tests."""
         # note: store should be EMPTY at this point
         # if you need to delete data, you may do so here
@@ -87,7 +87,8 @@ class TestSingleStoreVectorStore(VectorStoreIntegrationTests):
         ]
     )
     def vectorstore_with_vector_index(
-        self, request: pytest.FixtureRequest,
+        self,
+        request: pytest.FixtureRequest,
         clean_db_url: str,
     ) -> Generator[VectorStore, None, None]:
         """Get an empty vectorstore with vector index for unit tests."""
@@ -110,7 +111,9 @@ class TestSingleStoreVectorStore(VectorStoreIntegrationTests):
             pass
 
     @pytest.fixture()
-    def vectorestore_random(self, clean_db_url: str) -> Generator[SingleStoreVectorStore, None, None]:
+    def vectorestore_random(
+        self, clean_db_url: str
+    ) -> Generator[SingleStoreVectorStore, None, None]:
         """Get an empty vectorstore with random embeddings for unit tests."""
         # note: store should be EMPTY at this point
         # if you need to delete data, you may do so here
@@ -126,11 +129,10 @@ class TestSingleStoreVectorStore(VectorStoreIntegrationTests):
             # cleanup operations, or deleting data
             pass
 
-    @pytest.fixture(
-            params=[FullTextIndexVersion.V1, FullTextIndexVersion.V2]
-    )
-    def vectorestore_incremental(self, request: pytest.FixtureRequest, clean_db_url: str
-                                 ) -> Generator[SingleStoreVectorStore, None, None]:
+    @pytest.fixture(params=[FullTextIndexVersion.V1, FullTextIndexVersion.V2])
+    def vectorestore_incremental(
+        self, request: pytest.FixtureRequest, clean_db_url: str
+    ) -> Generator[SingleStoreVectorStore, None, None]:
         """Get an empty vectorstore with incremental embeddings for unit tests."""
         # note: store should be EMPTY at this point
         # if you need to delete data, you may do so here
@@ -147,7 +149,6 @@ class TestSingleStoreVectorStore(VectorStoreIntegrationTests):
         finally:
             # cleanup operations, or deleting data
             pass
-
 
     @pytest.fixture()
     def snow_rain_docs(self) -> List[Document]:
@@ -194,7 +195,9 @@ class TestSingleStoreVectorStore(VectorStoreIntegrationTests):
         ]
 
     @pytest.mark.xfail(reason="id should be integer")
-    def test_add_documents_with_existing_ids(self, vectorstore: VectorStore) -> None:
+    def test_add_documents_with_existing_ids(
+        self, vectorstore: VectorStore
+    ) -> None:
         """Test that add_documents with existing IDs is idempotent.
 
         .. dropdown:: Troubleshooting
@@ -378,7 +381,9 @@ class TestSingleStoreVectorStore(VectorStoreIntegrationTests):
             ),
         ]
         vectorstore.add_documents(documents)
-        output = vectorstore.similarity_search("foo", k=1, filter={"is_good": True})
+        output = vectorstore.similarity_search(
+            "foo", k=1, filter={"is_good": True}
+        )
         assert len(output) == 1
         assert output[0].page_content == "bar"
         assert output[0].metadata["category"] == "budget"
@@ -419,7 +424,9 @@ class TestSingleStoreVectorStore(VectorStoreIntegrationTests):
         assert len(output) == 1
         assert output[0].page_content in temp_files
 
-    def test_add_image2(self, clean_db_connection_parameters: ConnectionParameters) -> None:
+    def test_add_image2(
+        self, clean_db_connection_parameters: ConnectionParameters
+    ) -> None:
         docsearch = SingleStoreVectorStore(
             OpenCLIPEmbeddings(
                 model=None,
@@ -834,25 +841,34 @@ class TestSingleStoreVectorStore(VectorStoreIntegrationTests):
         )
         # Should work with FilterTypedDict in any search strategy
         assert len(output) > 0
-    
-    def test_fulltext_index_version_creation(self,
-                                            vectorestore_incremental: VectorStore) -> None:
+
+    def test_fulltext_index_version_creation(
+        self, vectorestore_incremental: VectorStore
+    ) -> None:
         """Test that full-text index is created when use_full_text_search is True."""
         conn = vectorestore_incremental._get_connection()
-        
+
         with conn.cursor() as cur:
             cur.execute("SHOW CREATE TABLE embeddings")
             result = cur.fetchone()
             assert result is not None
             create_table_sql = result[1]  # The second column contains the SQL
-            if vectorestore_incremental.full_text_index_version == FullTextIndexVersion.V1:
+            if (
+                vectorestore_incremental.full_text_index_version
+                == FullTextIndexVersion.V1
+            ):
                 assert "FULLTEXT USING VERSION 1" in create_table_sql
-            elif vectorestore_incremental.full_text_index_version == FullTextIndexVersion.V2:
+            elif (
+                vectorestore_incremental.full_text_index_version
+                == FullTextIndexVersion.V2
+            ):
                 assert "FULLTEXT USING VERSION 2" in create_table_sql
             else:
                 raise ValueError("Unexpected full text index version")
-    
-    def test_fulltext_search_korean(self, clean_db_connection_parameters: ConnectionParameters) -> None:
+
+    def test_fulltext_search_korean(
+        self, clean_db_connection_parameters: ConnectionParameters
+    ) -> None:
         """Test that full-text search works with Korean text."""
         docsearch = SingleStoreVectorStore(
             embedding=IncrementalEmbeddings(),
@@ -867,33 +883,46 @@ class TestSingleStoreVectorStore(VectorStoreIntegrationTests):
         try:
             docs = [
                 Document(
-                    page_content="""가뭄이 든 사막에 갑작스러운 폭우가 찾아와 안도감을 선사했습니다.
-                    메마른 땅 위로 빗방울이 춤을 추듯 떨어지며, 대지는 감미로운 흙 내음을 풍기며 활력을 되찾았습니다.""",
+                    page_content="""가뭄이 든 사막에 갑작스러운
+                    폭우가 찾아와 안도감을 선사했습니다.
+                    메마른 땅 위로 빗방울이 춤을 추듯 떨어지며,
+                    대지는 감미로운 흙 내음을 풍기며 활력을
+                    되찾았습니다.""",
                     metadata={"category": "비"},
                 ),
                 Document(
-                    page_content="""번화한 도시 한복판에서 비가 끊임없이 쏟아졌습니다.
-                    보도에 부딪히는 빗소리가 교향곡처럼 울려 퍼졌고, 회색빛 도심 속에는 알록달록한 우산들이 마치 꽃처럼 피어났습니다.""",
+                    page_content="""번화한 도시 한복판에서 비가
+                    끊임없이 쏟아졌습니다. 보도에 부딪히는 빗소리가
+                    교향곡처럼 울려 퍼졌고, 회색빛 도심 속에는
+                    알록달록한 우산들이 마치 꽃처럼 피어났습니다.""",
                     metadata={"category": "비"},
                 ),
                 Document(
-                    page_content="""높은 산맥 위로 비가 부드러운 안개로 변해 봉우리들을 신비로운 베일로 감싸 안았습니다.
-                    빗방울 하나하나가 아래에 놓인 고대의 바위들에게 비밀을 속삭이는 듯했습니다.""",
+                    page_content="""높은 산맥 위로 비가 부드러운
+                    안개로 변해 봉우리들을 신비로운 베일로 감싸 안았습니다.
+                    빗방울 하나하나가 아래에 놓인 고대의 바위들에게 비밀을
+                    속삭이는 듯했습니다.""",
                     metadata={"category": "비"},
                 ),
                 Document(
-                    page_content="""눈이 시골 풍경을 하얗고 깨끗하게 덮으며 평온한 장면을 연출했습니다.
-                    나뭇가지마다 내려앉은 섬세한 눈송이들은 마치 자연이 만든 레이스 같았고, 세상은 고요한 정적 속에 잠겼습니다.""",
+                    page_content="""눈이 시골 풍경을 하얗고 깨끗하게
+                    덮으며 평온한 장면을 연출했습니다. 나뭇가지마다 내려앉은
+                    섬세한 눈송이들은 마치 자연이 만든 레이스 같았고,
+                    세상은 고요한 정적 속에 잠겼습니다.""",
                     metadata={"category": "눈"},
                 ),
                 Document(
-                    page_content="""도심 속으로 눈이 내리며 번잡했던 거리들이 겨울의 동화 속 나라로 변했습니다.
-                    흩날리는 눈발 사이로 눈싸움을 하는 아이들의 웃음소리가 울려 퍼졌고, 연말의 전등불은 반짝였습니다.""",
+                    page_content="""도심 속으로 눈이 내리며 번잡했던
+                    거리들이 겨울의 동화 속 나라로 변했습니다. 흩날리는
+                    눈발 사이로 눈싸움을 하는 아이들의 웃음소리가 울려
+                    퍼졌고, 연말의 전등불은 반짝였습니다.""",
                     metadata={"category": "눈"},
                 ),
                 Document(
-                    page_content="""험준한 산봉우리 위로 눈이 거세게 쏟아지며 대지를 순백의 알프스 낙원으로 빚어냈습니다.
-                    얼어붙은 결정체들이 달빛 아래 영롱하게 빛나며, 아래에 펼쳐진 황야에 마법 같은 황홀함을 선사했습니다.""",
+                    page_content="""험준한 산봉우리 위로 눈이 거세게
+                    쏟아지며 대지를 순백의 알프스 낙원으로 빚어냈습니다.
+                    얼어붙은 결정체들이 달빛 아래 영롱하게 빛나며, 아래에
+                    펼쳐진 황야에 마법 같은 황홀함을 선사했습니다.""",
                     metadata={"category": "눈"},
                 ),
             ]
@@ -904,6 +933,9 @@ class TestSingleStoreVectorStore(VectorStoreIntegrationTests):
                 search_strategy=SingleStoreVectorStore.SearchStrategy.TEXT_ONLY,
             )
             assert len(textResults) == 1
-            assert "가뭄이 든 사막에 갑작스러운 폭우가 찾아와 안도감을 선사했습니다." in textResults[0].page_content
+            assert (
+                "가뭄이 든 사막에 갑작스러운"
+                in textResults[0].page_content
+            )
         finally:
             docsearch.drop()

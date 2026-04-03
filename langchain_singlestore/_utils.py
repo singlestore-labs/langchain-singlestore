@@ -52,6 +52,7 @@ class FullTextIndexVersion(str, Enum):
     V1 = "V1"
     V2 = "V2"
 
+
 def hash(_input: str) -> str:
     """Use a deterministic hashing approach."""
     return hashlib.md5(_input.encode()).hexdigest()

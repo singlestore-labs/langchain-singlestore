@@ -25,7 +25,11 @@ from langchain_core.vectorstores import VectorStore, VectorStoreRetriever
 from sqlalchemy.pool import QueuePool
 
 from langchain_singlestore._filter import FilterTypedDict, _parse_filter
-from langchain_singlestore._utils import DistanceStrategy, FullTextIndexVersion, set_connector_attributes
+from langchain_singlestore._utils import (
+    DistanceStrategy,
+    FullTextIndexVersion,
+    set_connector_attributes,
+)
 
 VST = TypeVar("VST", bound=VectorStore)
 
@@ -226,16 +230,18 @@ class SingleStoreVectorStore(VectorStore):
                 FILTER_BY_TEXT, FILTER_BY_VECTOR, and WIGHTED_SUM search strategies.
                 If set to False, the simularity_search method will only allow
                 VECTOR_ONLY search strategy.
-            
+
             full_text_index_version (FullTextIndexVersion, optional): Specifies the
-                version of the full-text index to use. Defaults to V1. This parameter has
-                effect only if use_full_text_search is set to True. Available options are:
-                - V1: Uses the original full-text index implementation. This version is
-                    compatible with all SingleStore versions that support full-text search.
-                - V2: Uses the new full-text index implementation that is available in
-                    SingleStore 8.7 and later. This version offers improved performance and
-                    additional features, but is not compatible with SingleStore versions
-                    prior to 8.7.
+                version of the full-text index to use. Defaults to V1. This parameter
+                has effect only if use_full_text_search is set to True.
+                Available options are:
+                - V1: Uses the original full-text index implementation. This version
+                    is compatible with all SingleStore versions that support
+                    full-text search.
+                - V2: Uses the new full-text index implementation that is available
+                    in SingleStore 8.7 and later. This version offers improved
+                    performance and additional features, but is not compatible with
+                    SingleStore versions prior to 8.7.
 
             Following arguments pertain to the connection pool:
 
@@ -405,7 +411,9 @@ class SingleStoreVectorStore(VectorStore):
                 full_text_index = ""
                 if self.use_full_text_search:
                     if self.full_text_index_version == FullTextIndexVersion.V2:
-                        full_text_index = ", FULLTEXT USING VERSION 2 ({})".format(self.content_field)
+                        full_text_index = ", FULLTEXT USING VERSION 2 ({})".format(
+                            self.content_field
+                        )
                     else:
                         full_text_index = ", FULLTEXT({})".format(self.content_field)
                 if self.use_vector_index:
@@ -892,11 +900,11 @@ class SingleStoreVectorStore(VectorStore):
                 if self.full_text_index_version == FullTextIndexVersion.V1:
                     where_clause_values.append(query)
                 else:
-                    where_clause_values.append("{}:({})".format(self.content_field, query))
+                    where_clause_values.append(
+                        "{}:({})".format(self.content_field, query)
+                    )
                     match_arg = "TABLE {}".format(self.table_name)
-                arguments.append(
-                    "MATCH ({}) AGAINST (%s) > %s".format(match_arg)
-                )
+                arguments.append("MATCH ({}) AGAINST (%s) > %s".format(match_arg))
                 where_clause_values.append(float(filter_threshold))
 
             if (
@@ -940,20 +948,6 @@ class SingleStoreVectorStore(VectorStore):
                         search_options = "SEARCH_OPTIONS '{\"k\":%d}'" % (
                             k * vector_select_count_multiplier
                         )
-                    sql_query = """SELECT {}, {}, {}, {}({}, JSON_ARRAY_PACK(%s)) as __score
-                        FROM {} {} ORDER BY __score {}{} LIMIT %s""".format(
-                            self.content_field,
-                            self.metadata_field,
-                            self.id_field,
-                            self.distance_strategy.name
-                            if isinstance(self.distance_strategy, DistanceStrategy)
-                            else self.distance_strategy,
-                            self.vector_field,
-                            self.table_name,
-                            where_clause,
-                            search_options,
-                            ORDERING_DIRECTIVE[self.distance_strategy],
-                        ) % (("[{}]".format(",".join(map(str, embedding))),) + tuple(where_clause_values) + (k,))
                     cur.execute(
                         """SELECT {}, {}, {}, {}({}, JSON_ARRAY_PACK(%s)) as __score
                         FROM {} {} ORDER BY __score {}{} LIMIT %s""".format(
