@@ -43,7 +43,9 @@ The `SingleStoreVectorStore` class provides a powerful document storage and retr
 - Multiple search strategies (VECTOR_ONLY, TEXT_ONLY, FILTER_BY_TEXT, FILTER_BY_VECTOR, WEIGHTED_SUM)
 - Simple and advanced metadata filtering
 - Efficient document management (add, delete, update)
-- Configurable distance metrics
+- Configurable distance metrics (DOT_PRODUCT, EUCLIDEAN_DISTANCE)
+- Full-text index versions (V1, V2) with different capabilities
+- Multiple text scoring algorithms (MATCH, BM25, BM25_GLOBAL)
 
 ### SQL Database Retriever
 
@@ -56,15 +58,9 @@ The `SingleStoreSQLDatabaseRetriever` enables LangChain agents and chains to exe
 - Integration with LangChain agents for database-aware AI
 - Support for complex queries with JSON results
 
-### Document Loader
+## Usage Examples
 
-The `SingleStoreLoader` class provides efficient loading of documents directly from SingleStore database tables.
-
-**Key Features:**
-- Load documents from any database table
-- Configurable content and metadata fields
-- Efficient batch processing
-- Support for complex metadata structures
+### Vector Store
 
 #### Basic Usage
 
@@ -230,6 +226,101 @@ results = vector_store.similarity_search(
     search_strategy=SearchStrategy.WEIGHTED_SUM  # Combines vector + text scores
 )
 ```
+
+#### Full-Text Index Versions
+
+SingleStore supports two versions of full-text indexes with different capabilities:
+
+```python
+from langchain_singlestore.vectorstores import SingleStoreVectorStore
+from langchain_singlestore._utils import FullTextIndexVersion
+from langchain_openai import OpenAIEmbeddings
+
+# Version 1 (V1) - Compatible with all SingleStore versions
+# Uses the original full-text index implementation
+vector_store_v1 = SingleStoreVectorStore(
+    embedding=OpenAIEmbeddings(),
+    host="127.0.0.1:3306/db",
+    use_full_text_search=True,
+    full_text_index_version=FullTextIndexVersion.V1,  # Default
+)
+
+# Version 2 (V2) - Requires SingleStore 8.7+
+# Offers improved performance and additional features like BM25 scoring
+vector_store_v2 = SingleStoreVectorStore(
+    embedding=OpenAIEmbeddings(),
+    host="127.0.0.1:3306/db",
+    use_full_text_search=True,
+    full_text_index_version=FullTextIndexVersion.V2,
+)
+```
+
+**Version Comparison:**
+
+| Feature | V1 | V2 |
+|---------|----|----|  
+| SingleStore Compatibility | All versions | 8.7+ |
+| MATCH scoring | ✓ | ✓ |
+| BM25 scoring | ✗ | ✓ |
+| BM25_GLOBAL scoring | ✗ | ✓ |
+
+#### Full-Text Scoring Modes
+
+When using full-text search strategies (TEXT_ONLY, FILTER_BY_TEXT, FILTER_BY_VECTOR, WEIGHTED_SUM), you can choose different scoring algorithms:
+
+```python
+from langchain_singlestore.vectorstores import SingleStoreVectorStore
+from langchain_singlestore._utils import FullTextIndexVersion, FullTextScoringMode
+from langchain_openai import OpenAIEmbeddings
+
+# Initialize with V2 full-text index (required for BM25 modes)
+vector_store = SingleStoreVectorStore(
+    embedding=OpenAIEmbeddings(),
+    host="127.0.0.1:3306/db",
+    use_full_text_search=True,
+    full_text_index_version=FullTextIndexVersion.V2,
+)
+
+# MATCH mode (default) - Works with V1 and V2
+# Uses native MATCH() AGAINST() function
+results = vector_store.similarity_search(
+    query="famous landmarks",
+    k=5,
+    search_strategy=SingleStoreVectorStore.SearchStrategy.TEXT_ONLY,
+    full_text_scoring_mode=FullTextScoringMode.MATCH,
+)
+
+# BM25 mode - Requires V2
+# Uses BM25 algorithm with TF-IDF and document length normalization
+results = vector_store.similarity_search(
+    query="famous landmarks",
+    k=5,
+    search_strategy=SingleStoreVectorStore.SearchStrategy.TEXT_ONLY,
+    full_text_scoring_mode=FullTextScoringMode.BM25,
+)
+
+# BM25_GLOBAL mode - Requires V2
+# Computes IDF statistics across the entire dataset (more accurate in distributed environments)
+results = vector_store.similarity_search(
+    query="famous landmarks",
+    k=5,
+    search_strategy=SingleStoreVectorStore.SearchStrategy.TEXT_ONLY,
+    full_text_scoring_mode=FullTextScoringMode.BM25_GLOBAL,
+)
+```
+
+**Scoring Mode Comparison:**
+
+| Mode | Description | Index Version | Use Case |
+|------|-------------|---------------|----------|
+| MATCH | Native SingleStore MATCH() function | V1, V2 | General text search, backward compatibility |
+| BM25 | Best Matching 25 algorithm | V2 only | More accurate relevance scoring with TF-IDF |
+| BM25_GLOBAL | BM25 with global IDF statistics | V2 only | Consistent scoring in distributed/sharded environments |
+
+**When to use each mode:**
+- **MATCH**: Default mode. Fast, simple keyword matching. Good for basic search needs.
+- **BM25**: Better relevance ranking by considering term frequency, inverse document frequency, and document length. Recommended for most text search applications.
+- **BM25_GLOBAL**: Same as BM25 but calculates statistics globally across all partitions. Use when you need consistent scoring across a distributed SingleStore cluster.
 
 ### Document Loader
 
