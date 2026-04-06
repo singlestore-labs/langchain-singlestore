@@ -850,7 +850,7 @@ class SingleStoreVectorStore(VectorStore):
         k: int = 4,
         filter: Optional[Union[dict, FilterTypedDict]] = None,
         search_strategy: SearchStrategy = SearchStrategy.VECTOR_ONLY,
-        filter_threshold: float = 1,
+        filter_threshold: float = 0,
         text_weight: float = 0.5,
         vector_weight: float = 0.5,
         vector_select_count_multiplier: int = 10,
