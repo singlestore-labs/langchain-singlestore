@@ -65,7 +65,7 @@ The `SingleStoreSQLDatabaseRetriever` enables LangChain agents and chains to exe
 #### Basic Usage
 
 ```python
-from langchain_singlestore.vectorstores import SingleStoreVectorStore
+from langchain_singlestore import SingleStoreVectorStore
 from langchain_core.documents import Document
 from langchain_openai import OpenAIEmbeddings
 
@@ -189,41 +189,41 @@ results = vector_store.similarity_search(
 Configure different search strategies based on your use case:
 
 ```python
-from langchain_singlestore._utils import SearchStrategy
+from langchain_singlestore import SingleStoreVectorStore
 
 # Strategy 1: Vector search only (fastest)
 results = vector_store.similarity_search(
     query="landmarks",
     k=5,
-    search_strategy=SearchStrategy.VECTOR_ONLY
+    search_strategy=SingleStoreVectorStore.SearchStrategy.VECTOR_ONLY
 )
 
 # Strategy 2: Full-text search only (best for keyword matching)
 results = vector_store.similarity_search(
     query="Eiffel",
     k=5,
-    search_strategy=SearchStrategy.TEXT_ONLY
+    search_strategy=SingleStoreVectorStore.SearchStrategy.TEXT_ONLY
 )
 
 # Strategy 3: Filter by text, then rank by vector (hybrid)
 results = vector_store.similarity_search(
     query="landmarks in paris",
     k=5,
-    search_strategy=SearchStrategy.FILTER_BY_TEXT  # Text match required
+    search_strategy=SingleStoreVectorStore.SearchStrategy.FILTER_BY_TEXT  # Text match required
 )
 
 # Strategy 4: Filter by vector, then rank by text
 results = vector_store.similarity_search(
     query="iconic structures",
     k=5,
-    search_strategy=SearchStrategy.FILTER_BY_VECTOR
+    search_strategy=SingleStoreVectorStore.SearchStrategy.FILTER_BY_VECTOR
 )
 
 # Strategy 5: Weighted combination (balanced approach)
 results = vector_store.similarity_search(
     query="famous landmarks",
     k=5,
-    search_strategy=SearchStrategy.WEIGHTED_SUM  # Combines vector + text scores
+    search_strategy=SingleStoreVectorStore.SearchStrategy.WEIGHTED_SUM  # Combines vector + text scores
 )
 ```
 
@@ -232,8 +232,7 @@ results = vector_store.similarity_search(
 SingleStore supports two versions of full-text indexes with different capabilities:
 
 ```python
-from langchain_singlestore.vectorstores import SingleStoreVectorStore
-from langchain_singlestore._utils import FullTextIndexVersion
+from langchain_singlestore import SingleStoreVectorStore, FullTextIndexVersion
 from langchain_openai import OpenAIEmbeddings
 
 # Version 1 (V1) - Compatible with all SingleStore versions
@@ -269,8 +268,11 @@ vector_store_v2 = SingleStoreVectorStore(
 When using full-text search strategies (TEXT_ONLY, FILTER_BY_TEXT, FILTER_BY_VECTOR, WEIGHTED_SUM), you can choose different scoring algorithms:
 
 ```python
-from langchain_singlestore.vectorstores import SingleStoreVectorStore
-from langchain_singlestore._utils import FullTextIndexVersion, FullTextScoringMode
+from langchain_singlestore import (
+    SingleStoreVectorStore,
+    FullTextIndexVersion,
+    FullTextScoringMode,
+)
 from langchain_openai import OpenAIEmbeddings
 
 # Initialize with V2 full-text index (required for BM25 modes)
@@ -333,7 +335,7 @@ The `SingleStoreLoader` class provides efficient loading of documents directly f
 - Support for complex metadata structures
 
 ```python
-from langchain_singlestore.document_loaders import SingleStoreLoader
+from langchain_singlestore import SingleStoreLoader
 from langchain_text_splitters import RecursiveCharacterTextSplitter
 
 # Initialize loader
