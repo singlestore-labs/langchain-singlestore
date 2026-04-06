@@ -819,6 +819,24 @@ class SingleStoreVectorStore(VectorStore):
         )
         return [doc for doc, _ in docs_and_scores]
 
+    def _fulltext_scoring_mode_to_sql(
+        self,
+        mode: FullTextScoringMode,
+        query: str,
+    ) -> tuple[str, str]:
+        """Convert the full text scoring mode to the corresponding SQL snippet."""
+        match_arg = self.content_field
+        search_query = query
+        if self.full_text_index_version != FullTextIndexVersion.V1:
+            search_query = "{}:({})".format(self.content_field, query)
+            match_arg = self.table_name
+            if mode == FullTextScoringMode.MATCH:
+                match_arg = "TABLE {}".format(self.table_name)
+        if mode == FullTextScoringMode.MATCH:
+            return "MATCH ({}) AGAINST (%s)".format(match_arg), search_query
+        else:
+            return "{}({}, %s)".format(mode.value, match_arg), search_query
+
     def similarity_search_with_score(
         self,
         query: str,
@@ -1030,15 +1048,11 @@ class SingleStoreVectorStore(VectorStore):
             arguments = []
 
             if search_strategy == SingleStoreVectorStore.SearchStrategy.FILTER_BY_TEXT:
-                match_arg = self.content_field
-                if self.full_text_index_version == FullTextIndexVersion.V1:
-                    where_clause_values.append(query)
-                else:
-                    where_clause_values.append(
-                        "{}:({})".format(self.content_field, query)
-                    )
-                    match_arg = "TABLE {}".format(self.table_name)
-                arguments.append("MATCH ({}) AGAINST (%s) > %s".format(match_arg))
+                function_sql, search_query = self._fulltext_scoring_mode_to_sql(
+                    full_text_scoring_mode, query
+                )
+                arguments.append("{} > %s".format(function_sql))
+                where_clause_values.append(search_query)
                 where_clause_values.append(float(filter_threshold))
 
             if (
@@ -1107,19 +1121,18 @@ class SingleStoreVectorStore(VectorStore):
                     or search_strategy
                     == SingleStoreVectorStore.SearchStrategy.TEXT_ONLY
                 ):
-                    full_text_query = query
-                    match_arg = self.content_field
-                    if self.full_text_index_version != FullTextIndexVersion.V1:
-                        match_arg = "TABLE {}".format(self.table_name)
-                        full_text_query = "{}:({})".format(self.content_field, query)
-
+                    fulltext_score_query, full_text_query = (
+                        self._fulltext_scoring_mode_to_sql(
+                            full_text_scoring_mode, query
+                        )
+                    )
                     cur.execute(
-                        """SELECT {}, {}, {}, MATCH ({}) AGAINST (%s) as __score
+                        """SELECT {}, {}, {}, {} as __score
                         FROM {} {} ORDER BY __score DESC LIMIT %s""".format(
                             self.content_field,
                             self.metadata_field,
                             self.id_field,
-                            match_arg,
+                            fulltext_score_query,
                             self.table_name,
                             where_clause,
                         ),
@@ -1129,15 +1142,15 @@ class SingleStoreVectorStore(VectorStore):
                     search_strategy
                     == SingleStoreVectorStore.SearchStrategy.WEIGHTED_SUM
                 ):
-                    full_text_query = query
-                    match_arg = self.content_field
-                    if self.full_text_index_version != FullTextIndexVersion.V1:
-                        full_text_query = "{}:({})".format(self.content_field, query)
-                        match_arg = "TABLE {}".format(self.table_name)
+                    fulltext_score_query, full_text_query = (
+                        self._fulltext_scoring_mode_to_sql(
+                            full_text_scoring_mode, query
+                        )
+                    )
                     cur.execute(
                         """SELECT {}, {}, r1.{} as {}, __score1 * %s + __score2 * %s
                         as __score FROM (
-                            SELECT {}, {}, {}, MATCH ({}) AGAINST (%s) as __score1 
+                            SELECT {}, {}, {}, {} as __score1
                         FROM {} {}) r1 FULL OUTER JOIN (
                             SELECT {}, {}({}, JSON_ARRAY_PACK(%s)) as __score2
                             FROM {} {} ORDER BY __score2 {} LIMIT %s
@@ -1149,7 +1162,7 @@ class SingleStoreVectorStore(VectorStore):
                             self.id_field,
                             self.content_field,
                             self.metadata_field,
-                            match_arg,
+                            fulltext_score_query,
                             self.table_name,
                             where_clause,
                             self.id_field,
