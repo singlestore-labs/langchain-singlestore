@@ -101,7 +101,7 @@ class SingleStoreChatMessageHistory(BaseChatMessageHistory):
 
             .. code-block:: python
 
-                from langchain_community.chat_message_histories import (
+                from langchain_singlestore import (
                     SingleStoreDBChatMessageHistory
                 )
 
@@ -114,7 +114,7 @@ class SingleStoreChatMessageHistory(BaseChatMessageHistory):
 
             .. code-block:: python
 
-                from langchain_community.chat_message_histories import (
+                from langchain_singlestore import (
                     SingleStoreDBChatMessageHistory
                 )
 
@@ -134,7 +134,7 @@ class SingleStoreChatMessageHistory(BaseChatMessageHistory):
 
             .. code-block:: python
 
-                from langchain_community.chat_message_histories import (
+                from langchain_singlestore import (
                     SingleStoreDBChatMessageHistory
                 )
 

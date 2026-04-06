@@ -1,6 +1,11 @@
 from importlib import metadata
 
 from langchain_singlestore._filter import FilterTypedDict
+from langchain_singlestore._utils import (
+    DistanceStrategy,
+    FullTextIndexVersion,
+    FullTextScoringMode,
+)
 from langchain_singlestore.cache import SingleStoreSemanticCache
 from langchain_singlestore.chat_message_history import SingleStoreChatMessageHistory
 from langchain_singlestore.document_loaders import SingleStoreLoader
@@ -25,5 +30,8 @@ __all__ = [
     "SingleStoreSQLDatabaseRetriever",
     "SingleStoreSQLDatabaseChain",
     "FilterTypedDict",
+    "FullTextScoringMode",
+    "FullTextIndexVersion",
+    "DistanceStrategy",
     "__version__",
 ]
