@@ -1314,9 +1314,8 @@ class SingleStoreVectorStore(VectorStore):
                 - V2: Uses the new full-text index implementation introduced in
                     SingleStore 8.7. This version offers improved performance and
                     additional features, but is only compatible with SingleStore 8.7
-                    or later. If use_full_text_search is set to True and the
-                    SingleStore version is 8.7 or later, this will be used as the
-                    default value.
+                    or later. To use this version, it must be explicitly passed as
+                    the value of full_text_index_version.
 
             pool_size (int, optional): Determines the number of active connections in
                 the pool. Defaults to 5.
