@@ -866,6 +866,44 @@ class TestSingleStoreVectorStore(VectorStoreIntegrationTests):
             else:
                 raise ValueError("Unexpected full text index version")
 
+    @pytest.mark.parametrize(
+        "full_text_index_version",
+        [FullTextIndexVersion.V1, FullTextIndexVersion.V2],
+    )
+    def test_fulltext_index_version_creation_from_texts(
+        self,
+        clean_db_connection_parameters: ConnectionParameters,
+        full_text_index_version: FullTextIndexVersion,
+    ) -> None:
+        """Test that full-text index is created when use_full_text_search is True."""
+        docsearch = SingleStoreVectorStore.from_texts(
+            ["test"],
+            embedding=IncrementalEmbeddings(),
+            host=clean_db_connection_parameters.Host,
+            port=clean_db_connection_parameters.Port,
+            user=clean_db_connection_parameters.User,
+            password=clean_db_connection_parameters.Password,
+            database=clean_db_connection_parameters.Database,
+            use_full_text_search=True,
+            full_text_index_version=full_text_index_version,
+        )
+        try:
+            conn = docsearch._get_connection()
+
+            with conn.cursor() as cur:
+                cur.execute("SHOW CREATE TABLE embeddings")
+                result = cur.fetchone()
+                assert result is not None
+                create_table_sql = result[1]  # The second column contains the SQL
+                if full_text_index_version == FullTextIndexVersion.V1:
+                    assert "FULLTEXT USING VERSION 1" in create_table_sql
+                elif full_text_index_version == FullTextIndexVersion.V2:
+                    assert "FULLTEXT USING VERSION 2" in create_table_sql
+                else:
+                    raise ValueError("Unexpected full text index version")
+        finally:
+            docsearch.drop()
+
     def test_fulltext_search_korean(
         self, clean_db_connection_parameters: ConnectionParameters
     ) -> None:
