@@ -1022,7 +1022,8 @@ class SingleStoreVectorStore(VectorStore):
             )
 
         if (
-            full_text_scoring_mode != FullTextScoringMode.MATCH
+            search_strategy != SingleStoreVectorStore.SearchStrategy.VECTOR_ONLY
+            and full_text_scoring_mode != FullTextScoringMode.MATCH
             and self.full_text_index_version != FullTextIndexVersion.V2
         ):
             raise ValueError(
