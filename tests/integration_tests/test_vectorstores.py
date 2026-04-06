@@ -11,7 +11,11 @@ from langchain_core.vectorstores import VectorStore
 from langchain_experimental.open_clip import OpenCLIPEmbeddings
 from langchain_tests.integration_tests import VectorStoreIntegrationTests
 
-from langchain_singlestore._utils import DistanceStrategy, FullTextIndexVersion
+from langchain_singlestore._utils import (
+    DistanceStrategy,
+    FullTextIndexVersion,
+    FullTextScoringMode,
+)
 from langchain_singlestore.vectorstores import SingleStoreVectorStore
 from tests.integration_tests.conftest import TEST_DB_NAME, ConnectionParameters
 
@@ -901,6 +905,41 @@ class TestSingleStoreVectorStore(VectorStoreIntegrationTests):
                     assert "FULLTEXT USING VERSION 2" in create_table_sql
                 else:
                     raise ValueError("Unexpected full text index version")
+        finally:
+            docsearch.drop()
+
+    @pytest.mark.parametrize(
+        "full_text_scoring_mode",
+        [FullTextScoringMode.BM25, FullTextScoringMode.BM25_GLOBAL],
+    )
+    def test_fulltext_search_v1_unsupported(
+        self,
+        full_text_scoring_mode: FullTextScoringMode,
+        clean_db_connection_parameters: ConnectionParameters,
+    ) -> None:
+        """Test that using unsupported full-text search version raises error."""
+        docsearch = SingleStoreVectorStore(
+            embedding=IncrementalEmbeddings(),
+            host=clean_db_connection_parameters.Host,
+            port=clean_db_connection_parameters.Port,
+            user=clean_db_connection_parameters.User,
+            password=clean_db_connection_parameters.Password,
+            database=clean_db_connection_parameters.Database,
+            use_full_text_search=True,
+            full_text_index_version=FullTextIndexVersion.V1,
+        )
+        try:
+            with pytest.raises(ValueError) as exc_info:
+                docsearch.similarity_search(
+                    "test",
+                    k=1,
+                    search_strategy=SingleStoreVectorStore.SearchStrategy.TEXT_ONLY,
+                    full_text_scoring_mode=full_text_scoring_mode,
+                )
+            assert (
+                "is not supported with full-text index version FullTextIndexVersion.V1"
+                in str(exc_info.value)
+            )
         finally:
             docsearch.drop()
 

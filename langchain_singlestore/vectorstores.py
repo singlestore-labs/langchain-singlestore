@@ -1003,6 +1003,16 @@ class SingleStoreVectorStore(VectorStore):
                 )
             )
 
+        if (
+            full_text_scoring_mode != FullTextScoringMode.MATCH
+            and self.full_text_index_version != FullTextIndexVersion.V2
+        ):
+            raise ValueError(
+                "Scoring {} is not supported with full-text index version {}".format(
+                    full_text_scoring_mode, self.full_text_index_version
+                )
+            )
+
         # Creates embedding vector from user query
         embedding = []
         if search_strategy != SingleStoreVectorStore.SearchStrategy.TEXT_ONLY:
