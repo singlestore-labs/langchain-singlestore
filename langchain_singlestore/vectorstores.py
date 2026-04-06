@@ -335,7 +335,7 @@ class SingleStoreVectorStore(VectorStore):
                 from langchain_openai import OpenAIEmbeddings
                 from langchain_singlestore import SingleStoreVectorStore
 
-                vectorstore = SingleStoreVectorStor(
+                vectorstore = SingleStoreVectorStore(
                     OpenAIEmbeddings(),
                     host="https://user:password@127.0.0.1:3306/database"
                 )
@@ -971,9 +971,9 @@ class SingleStoreVectorStore(VectorStore):
             .. code-block:: python
 
                 from langchain_singlestore import (
-                    SingleStoreVectorStore
+                    SingleStoreVectorStore,
                     FullTextIndexVersion,
-                    FullTextScoringMode
+                    FullTextScoringMode,
                 )
                 from langchain_openai import OpenAIEmbeddings
 
