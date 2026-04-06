@@ -53,6 +53,14 @@ class FullTextIndexVersion(str, Enum):
     V2 = "V2"
 
 
+class FullTextScoringMode(str, Enum):
+    """Enumerator of the Full-Text Scoring Modes"""
+
+    MATCH = "MATCH"
+    BM25 = "BM25"
+    BM25_GLOBAL = "BM25_GLOBAL"
+
+
 def hash(_input: str) -> str:
     """Use a deterministic hashing approach."""
     return hashlib.md5(_input.encode()).hexdigest()
