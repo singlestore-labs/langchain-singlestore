@@ -5,6 +5,53 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.4.0] - 2026-04-07
+
+### Added
+
+#### Full-Text Index Version 2 Support
+- **New `full_text_index_version` parameter** in `SingleStoreVectorStore` constructor
+  - `V1` (default): Original full-text index implementation compatible with all SingleStore versions
+  - `V2`: New full-text index implementation available in SingleStore 8.7+ with improved performance and additional features
+- Automatic SQL syntax adaptation based on the selected full-text index version
+
+#### Full-Text Scoring Modes
+- **New `full_text_scoring_mode` parameter** in `similarity_search` and `similarity_search_with_score` methods
+  - `MATCH` (default): Uses SingleStore's native MATCH() AGAINST() function, compatible with V1 and V2
+  - `BM25`: Best Matching 25 algorithm with TF-IDF scoring and document length normalization (requires V2)
+  - `BM25_GLOBAL`: BM25 with global IDF statistics across all partitions for consistent scoring in distributed environments (requires V2)
+- New `FullTextScoringMode` enum exported from `langchain_singlestore`
+- Validation to reject BM25/BM25_GLOBAL modes when using V1 full-text index
+
+#### Enhanced Documentation
+- Improved docstrings for `DistanceStrategy`, `FullTextIndexVersion`, and `FullTextScoringMode` enums with detailed attribute descriptions
+- Updated README with comprehensive documentation for full-text index versions and scoring modes
+- Added comparison tables for version features and scoring mode use cases
+- Fixed inaccurate "cosine similarity" description in search methods (now correctly describes configurable distance strategy)
+
+#### New Unit Tests
+- `TestFulltextScoringModeToSql` test class covering all scoring mode and index version combinations
+- Tests for custom content fields and table names with different configurations
+
+### Changed
+
+- Refactored full-text SQL generation into centralized `_fulltext_scoring_mode_to_sql` method
+- Improved code examples in docstrings to use correct public imports from `langchain_singlestore`
+
+### Fixed
+
+- Fixed typo in `__init__` docstring example (`SingleStoreVectorStor` → `SingleStoreVectorStore`)
+- Fixed missing comma in import statement in `similarity_search_with_score` docstring example
+- Fixed missing blank line in code-block directive for full-text index example
+
+### Dependencies
+
+- Updated `aiohttp` from 3.13.3 to 3.13.4
+- Updated `pygments` from 2.19.2 to 2.20.0
+- Updated `langchain-core` from 1.2.15 to 1.2.22
+- Updated `requests` from 2.32.5 to 2.33.0
+- Updated `pyjwt` from 2.11.0 to 2.12.0
+
 ## [1.3.0] - 2026-03-10
 
 ### Added
