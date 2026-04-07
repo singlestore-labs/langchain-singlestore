@@ -1056,15 +1056,15 @@ class TestSingleStoreVectorStore(VectorStoreIntegrationTests):
         )
         try:
             docsearch.add_documents(korean_docs)
-            textResults = docsearch.similarity_search(
+            text_results = docsearch.similarity_search(
                 "메마른 사막의 폭우, 비",
                 k=1,
                 search_strategy=SingleStoreVectorStore.SearchStrategy.FILTER_BY_VECTOR,
                 filter_threshold=-10.0,
                 full_text_scoring_mode=full_text_scoring_mode,
             )
-            assert len(textResults) == 1
-            assert "가뭄이 든 사막에 갑작스러운" in textResults[0].page_content
+            assert len(text_results) == 1
+            assert "가뭄이 든 사막에 갑작스러운" in text_results[0].page_content
         finally:
             docsearch.drop()
 
@@ -1095,14 +1095,14 @@ class TestSingleStoreVectorStore(VectorStoreIntegrationTests):
         )
         try:
             docsearch.add_documents(korean_docs)
-            textResults = docsearch.similarity_search(
+            text_results = docsearch.similarity_search(
                 "메마른 사막의 폭우, 비",
                 k=1,
                 search_strategy=SingleStoreVectorStore.SearchStrategy.FILTER_BY_TEXT,
                 filter_threshold=0.2,
                 full_text_scoring_mode=full_text_scoring_mode,
             )
-            assert len(textResults) == 1
-            assert "가뭄이 든 사막에 갑작스러운" in textResults[0].page_content
+            assert len(text_results) == 1
+            assert "가뭄이 든 사막에 갑작스러운" in text_results[0].page_content
         finally:
             docsearch.drop()
