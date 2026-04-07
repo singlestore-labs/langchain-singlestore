@@ -389,6 +389,7 @@ class SingleStoreVectorStore(VectorStore):
             Using full-text index:
 
             .. code-block:: python
+
                 from langchain_openai import OpenAIEmbeddings
                 from langchain_singlestore import SingleStoreVectorStore
 
@@ -665,7 +666,8 @@ class SingleStoreVectorStore(VectorStore):
     ) -> List[Document]:
         """Returns the most similar indexed documents to the query text.
 
-        Uses cosine similarity.
+        Uses the configured distance_strategy (DOT_PRODUCT or EUCLIDEAN_DISTANCE)
+        to measure similarity between vectors.
 
         Args:
             query (str): The query text for which to find similar documents.
@@ -857,7 +859,10 @@ class SingleStoreVectorStore(VectorStore):
         full_text_scoring_mode: FullTextScoringMode = FullTextScoringMode.MATCH,
         **kwargs: Any,
     ) -> List[Tuple[Document, float]]:
-        """Return docs most similar to query. Uses cosine similarity.
+        """Return docs most similar to query.
+
+        Uses the configured distance_strategy (DOT_PRODUCT or EUCLIDEAN_DISTANCE)
+        to measure similarity between vectors.
 
         Args:
             query: Text to look up documents similar to.
