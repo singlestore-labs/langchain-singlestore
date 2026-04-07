@@ -39,18 +39,53 @@ def set_connector_attributes(connection_kwargs: dict) -> None:
 
 
 class DistanceStrategy(str, Enum):
-    """Enumerator of the Distance strategies for calculating distances
-    between vectors."""
+    """Distance strategies for calculating similarity between vectors.
+
+    Attributes:
+        EUCLIDEAN_DISTANCE: Computes the Euclidean (L2) distance between vectors.
+            Lower scores indicate more similar vectors. Not compatible with
+            WEIGHTED_SUM search strategy.
+        DOT_PRODUCT: Computes the dot product (inner product) between vectors.
+            Higher scores indicate more similar vectors. This is the default
+            and recommended strategy for most embedding models.
+    """
 
     EUCLIDEAN_DISTANCE = "EUCLIDEAN_DISTANCE"
     DOT_PRODUCT = "DOT_PRODUCT"
 
 
 class FullTextIndexVersion(str, Enum):
-    """Enumerator of the Full-Text Index versions"""
+    """Full-text index versions supported by SingleStore.
+
+    Attributes:
+        V1: Original full-text index implementation. Compatible with all
+            SingleStore versions that support full-text search. Only supports
+            MATCH scoring mode.
+        V2: New full-text index implementation available in SingleStore 8.7+.
+            Offers improved performance and supports additional scoring modes
+            (BM25, BM25_GLOBAL).
+    """
 
     V1 = "V1"
     V2 = "V2"
+
+
+class FullTextScoringMode(str, Enum):
+    """Scoring algorithms for full-text search ranking.
+
+    Attributes:
+        MATCH: Uses SingleStore's native MATCH() AGAINST() function.
+            Compatible with both V1 and V2 full-text indexes.
+        BM25: Best Matching 25 algorithm with TF-IDF scoring and document
+            length normalization. Requires V2 full-text index.
+        BM25_GLOBAL: BM25 with global IDF statistics across all partitions.
+            Provides consistent scoring in distributed environments.
+            Requires V2 full-text index.
+    """
+
+    MATCH = "MATCH"
+    BM25 = "BM25"
+    BM25_GLOBAL = "BM25_GLOBAL"
 
 
 def hash(_input: str) -> str:

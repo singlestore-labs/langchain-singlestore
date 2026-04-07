@@ -28,7 +28,7 @@ class SingleStoreLoader(BaseLoader):
         Instantiate:
             .. code-block:: python
 
-                from langchain_community.document_loaders import SingleStoreLoader
+                from langchain_singlestore import SingleStoreLoader
 
                 loader = SingleStoreLoader(
                     host="https://user:password@127.0.0.1:3306/database",

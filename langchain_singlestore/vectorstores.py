@@ -28,6 +28,7 @@ from langchain_singlestore._filter import FilterTypedDict, _parse_filter
 from langchain_singlestore._utils import (
     DistanceStrategy,
     FullTextIndexVersion,
+    FullTextScoringMode,
     set_connector_attributes,
 )
 
@@ -85,8 +86,11 @@ def _apply_filter_to_where_clause(
 
     Args:
         metadata_field: Name of the metadata field in the database
+
         filter_dict: Filter specification (simple dict or FilterTypedDict)
+
         where_clause_values: List to accumulate parameter values for SQL
+
         arguments: List to accumulate SQL WHERE clause conditions
     """
     if not filter_dict:
@@ -181,10 +185,14 @@ class SingleStoreVectorStore(VectorStore):
             distance_strategy (DistanceStrategy, optional):
                 Determines the strategy employed for calculating
                 the distance between vectors in the embedding space.
+
                 Defaults to DOT_PRODUCT.
+
                 Available options are:
+
                 - DOT_PRODUCT: Computes the scalar product of two vectors.
                     This is the default behavior
+
                 - EUCLIDEAN_DISTANCE: Computes the Euclidean distance between
                     two vectors. This metric considers the geometric distance in
                     the vector space, and might be more suitable for embeddings
@@ -193,12 +201,16 @@ class SingleStoreVectorStore(VectorStore):
 
             table_name (str, optional): Specifies the name of the table in use.
                 Defaults to "embeddings".
+
             content_field (str, optional): Specifies the field to store the content.
                 Defaults to "content".
+
             metadata_field (str, optional): Specifies the field to store metadata.
                 Defaults to "metadata".
+
             vector_field (str, optional): Specifies the field to store the vector.
                 Defaults to "vector".
+
             id_field (str, optional): Specifies the field to store the id.
                 Defaults to "id".
 
@@ -214,7 +226,9 @@ class SingleStoreVectorStore(VectorStore):
                 the vector index. Defaults to {}.
                 Will be ignored if use_vector_index is set to False. The options are:
                 index_type (str, optional): Specifies the type of the index.
-                    Defaults to IVF_PQFS.
+
+                Defaults to IVF_PQFS.
+
                 For more options, please refer to the SingleStore documentation:
                 https://docs.singlestore.com/cloud/reference/sql-reference/vector-functions/vector-indexing/
 
@@ -243,50 +257,73 @@ class SingleStoreVectorStore(VectorStore):
                     performance and additional features, but is not compatible with
                     SingleStore versions prior to 8.7.
 
+
             Following arguments pertain to the connection pool:
 
             pool_size (int, optional): Determines the number of active connections in
                 the pool. Defaults to 5.
+
             max_overflow (int, optional): Determines the maximum number of connections
                 allowed beyond the pool_size. Defaults to 10.
+
             timeout (float, optional): Specifies the maximum wait time in seconds for
                 establishing a connection. Defaults to 30.
+
 
             Following arguments pertain to the database connection:
 
             host (str, optional): Specifies the hostname, IP address, or URL for the
                 database connection. The default scheme is "mysql".
+
             user (str, optional): Database username.
+
             password (str, optional): Database password.
+
             port (int, optional): Database port. Defaults to 3306 for non-HTTP
                 connections, 80 for HTTP connections, and 443 for HTTPS connections.
+
             database (str, optional): Database name.
+
 
             Additional optional arguments provide further customization over the
             database connection:
 
             pure_python (bool, optional): Toggles the connector mode. If True,
                 operates in pure Python mode.
+
             local_infile (bool, optional): Allows local file uploads.
+
             charset (str, optional): Specifies the character set for string values.
+
             ssl_key (str, optional): Specifies the path of the file containing the SSL
                 key.
+
             ssl_cert (str, optional): Specifies the path of the file containing the SSL
                 certificate.
+
             ssl_ca (str, optional): Specifies the path of the file containing the SSL
                 certificate authority.
+
             ssl_cipher (str, optional): Sets the SSL cipher list.
+
             ssl_disabled (bool, optional): Disables SSL usage.
+
             ssl_verify_cert (bool, optional): Verifies the server's certificate.
                 Automatically enabled if ``ssl_ca`` is specified.
+
             ssl_verify_identity (bool, optional): Verifies the server's identity.
+
             conv (dict[int, Callable], optional): A dictionary of data conversion
                 functions.
+
             credential_type (str, optional): Specifies the type of authentication to
                 use: auth.PASSWORD, auth.JWT, or auth.BROWSER_SSO.
+
             autocommit (bool, optional): Enables autocommits.
+
             results_type (str, optional): Determines the structure of the query results:
                 tuples, namedtuples, dicts.
+
             results_format (str, optional): Deprecated. This option has been renamed to
                 results_type.
 
@@ -296,9 +333,9 @@ class SingleStoreVectorStore(VectorStore):
             .. code-block:: python
 
                 from langchain_openai import OpenAIEmbeddings
-                from langchain_community.vectorstores import SingleStoreVectorStore
+                from langchain_singlestore import SingleStoreVectorStore
 
-                vectorstore = SingleStoreVectorStor(
+                vectorstore = SingleStoreVectorStore(
                     OpenAIEmbeddings(),
                     host="https://user:password@127.0.0.1:3306/database"
                 )
@@ -308,7 +345,10 @@ class SingleStoreVectorStore(VectorStore):
             .. code-block:: python
 
                 from langchain_openai import OpenAIEmbeddings
-                from langchain_community.vectorstores import SingleStoreVectorStore
+                from langchain_singlestore import (
+                    SingleStoreVectorStore,
+                    DistanceStrategy,
+                )
 
                 vectorstore = SingleStoreVectorStore(
                     OpenAIEmbeddings(),
@@ -328,7 +368,7 @@ class SingleStoreVectorStore(VectorStore):
             .. code-block:: python
 
                 from langchain_openai import OpenAIEmbeddings
-                from langchain_community.vectorstores import SingleStoreVectorStore
+                from langchain_singlestore import SingleStoreVectorStore
 
                 os.environ['SingleStore_URL'] = 'me:p455w0rd@s2-host.com/my_db'
                 vectorstore = SingleStoreVectorStore(OpenAIEmbeddings())
@@ -338,7 +378,7 @@ class SingleStoreVectorStore(VectorStore):
             .. code-block:: python
 
                 from langchain_openai import OpenAIEmbeddings
-                from langchain_community.vectorstores import SingleStoreVectorStore
+                from langchain_singlestore import SingleStoreVectorStore
 
                 os.environ['SingleStore_URL'] = 'me:p455w0rd@s2-host.com/my_db'
                 vectorstore = SingleStoreVectorStore(
@@ -349,8 +389,9 @@ class SingleStoreVectorStore(VectorStore):
             Using full-text index:
 
             .. code-block:: python
+
                 from langchain_openai import OpenAIEmbeddings
-                from langchain_community.vectorstores import SingleStoreVectorStore
+                from langchain_singlestore import SingleStoreVectorStore
 
                 os.environ['SingleStore_URL'] = 'me:p455w0rd@s2-host.com/my_db'
                 vectorstore = SingleStoreVectorStore(
@@ -468,10 +509,12 @@ class SingleStoreVectorStore(VectorStore):
         """Run images through the embeddings and add to the vectorstore.
 
         Args:
-            uris List[str]: File path to images.
+            uris (List[str]): File path to images.
                 Each URI will be added to the vectorstore as document content.
+
             metadatas (Optional[List[dict]], optional): Optional list of metadatas.
                 Defaults to None.
+
             embeddings (Optional[List[List[float]]], optional): Optional pre-generated
                 embeddings. Defaults to None.
 
@@ -499,8 +542,10 @@ class SingleStoreVectorStore(VectorStore):
 
         Args:
             texts (Iterable[str]): Iterable of strings/text to add to the vectorstore.
+
             metadatas (Optional[List[dict]], optional): Optional list of metadatas.
                 Defaults to None.
+
             embeddings (Optional[List[List[float]]], optional): Optional pre-generated
                 embeddings. Defaults to None.
 
@@ -616,15 +661,19 @@ class SingleStoreVectorStore(VectorStore):
         text_weight: float = 0.5,
         vector_weight: float = 0.5,
         vector_select_count_multiplier: int = 10,
+        full_text_scoring_mode: FullTextScoringMode = FullTextScoringMode.MATCH,
         **kwargs: Any,
     ) -> List[Document]:
         """Returns the most similar indexed documents to the query text.
 
-        Uses cosine similarity.
+        Uses the configured distance_strategy (DOT_PRODUCT or EUCLIDEAN_DISTANCE)
+        to measure similarity between vectors.
 
         Args:
             query (str): The query text for which to find similar documents.
+
             k (int): The number of documents to return. Default is 4.
+
             filter (dict or FilterTypedDict, optional): A dictionary to filter by
                 metadata. Can be either:
 
@@ -638,30 +687,40 @@ class SingleStoreVectorStore(VectorStore):
                    - Logical: ``{"$and": [{...}, {...}]}``
 
                 Default is None.
+
             search_strategy (SearchStrategy): The search strategy to use.
                 Default is SearchStrategy.VECTOR_ONLY.
+
                 Available options are:
                 - SearchStrategy.VECTOR_ONLY: Searches only by vector similarity.
+
                 - SearchStrategy.TEXT_ONLY: Searches only by text similarity. This
                     option is only available if use_full_text_search is True.
+
                 - SearchStrategy.FILTER_BY_TEXT: Filters by text similarity and
                     searches by vector similarity. This option is only available if
                     use_full_text_search is True.
+
                 - SearchStrategy.FILTER_BY_VECTOR: Filters by vector similarity and
                     searches by text similarity. This option is only available if
                     use_full_text_search is True.
+
                 - SearchStrategy.WEIGHTED_SUM: Searches by a weighted sum of text and
                     vector similarity. This option is only available if
                     use_full_text_search is True and distance_strategy is DOT_PRODUCT.
+
             filter_threshold (float): The threshold for filtering by text or vector
                 similarity. Default is 0. This option has effect only if search_strategy
                 is SearchStrategy.FILTER_BY_TEXT or SearchStrategy.FILTER_BY_VECTOR.
+
             text_weight (float): The weight of text similarity in the weighted sum
                 search strategy. Default is 0.5. This option has effect only if
                 search_strategy is SearchStrategy.WEIGHTED_SUM.
+
             vector_weight (float): The weight of vector similarity in the weighted sum
                 search strategy. Default is 0.5. This option has effect only if
                 search_strategy is SearchStrategy.WEIGHTED_SUM.
+
             vector_select_count_multiplier (int): The multiplier for the number of
                 vectors to select when using the vector index. Default is 10.
                 This parameter has effect only if use_vector_index is True and
@@ -671,6 +730,28 @@ class SingleStoreVectorStore(VectorStore):
                 be k * vector_select_count_multiplier.
                 This is needed due to the limitations of the vector index.
 
+            full_text_scoring_mode (FullTextScoringMode): Specifies the algorithm
+                used to calculate text similarity scores. Defaults to
+                FullTextScoringMode.MATCH. This parameter only takes effect when
+                search_strategy is TEXT_ONLY, FILTER_BY_TEXT, FILTER_BY_VECTOR, or
+                WEIGHTED_SUM.
+
+                Available options:
+
+                - MATCH: Uses SingleStore's native MATCH() AGAINST() function.
+                    Returns a relevance score based on term frequency in the
+                    document. Compatible with both full-text index V1 and V2.
+
+                - BM25: Uses the BM25 (Best Matching 25) ranking algorithm.
+                    Provides more accurate relevance scoring by considering
+                    term frequency (TF), inverse document frequency (IDF), and
+                    document length normalization. Requires full-text index V2.
+
+                - BM25_GLOBAL: Similar to BM25, but computes IDF statistics
+                    across the entire dataset rather than per-partition. This
+                    can provide more consistent scoring in distributed
+                    environments but may have higher computational cost.
+                    Requires full-text index V2.
 
         Returns:
             List[Document]: A list of documents that are most similar to the query text.
@@ -680,7 +761,7 @@ class SingleStoreVectorStore(VectorStore):
             Basic Usage:
             .. code-block:: python
 
-                from langchain_community.vectorstores import SingleStoreVectorStore
+                from langchain_singlestore import SingleStoreVectorStore
                 from langchain_openai import OpenAIEmbeddings
 
                 s2 = SingleStoreVectorStore.from_documents(
@@ -694,7 +775,7 @@ class SingleStoreVectorStore(VectorStore):
             Different Search Strategies:
             .. code-block:: python
 
-                from langchain_community.vectorstores import SingleStoreVectorStore
+                from langchain_singlestore import SingleStoreVectorStore
                 from langchain_openai import OpenAIEmbeddings
 
                 s2 = SingleStoreVectorStore.from_documents(
@@ -711,7 +792,11 @@ class SingleStoreVectorStore(VectorStore):
             Weighted Sum Search Strategy:
             .. code-block:: python
 
-                from langchain_community.vectorstores import SingleStoreVectorStore
+                from langchain_singlestore import (
+                    SingleStoreVectorStore,
+                    FullTextScoringMode,
+                    FullTextIndexVersion,
+                )
                 from langchain_openai import OpenAIEmbeddings
 
                 s2 = SingleStoreVectorStore.from_documents(
@@ -720,11 +805,14 @@ class SingleStoreVectorStore(VectorStore):
                     host="username:password@localhost:3306/database",
                     use_full_text_search=True,
                     use_vector_index=True,
+                    full_text_index_version=FullTextIndexVersion.V2,
                 )
                 results = s2.similarity_search("query text", 1,
                     search_strategy=SingleStoreVectorStore.SearchStrategy.WEIGHTED_SUM,
                     text_weight=0.3,
-                    vector_weight=0.7)
+                    vector_weight=0.7,
+                    full_text_scoring_mode=FullTextScoringMode.BM25,
+                )
         """
         docs_and_scores = self.similarity_search_with_score(
             query=query,
@@ -735,9 +823,28 @@ class SingleStoreVectorStore(VectorStore):
             text_weight=text_weight,
             vector_weight=vector_weight,
             vector_select_count_multiplier=vector_select_count_multiplier,
+            full_text_scoring_mode=full_text_scoring_mode,
             **kwargs,
         )
         return [doc for doc, _ in docs_and_scores]
+
+    def _fulltext_scoring_mode_to_sql(
+        self,
+        mode: FullTextScoringMode,
+        query: str,
+    ) -> tuple[str, str]:
+        """Convert the full text scoring mode to the corresponding SQL snippet."""
+        match_arg = self.content_field
+        search_query = query
+        if self.full_text_index_version != FullTextIndexVersion.V1:
+            search_query = "{}:({})".format(self.content_field, query)
+            match_arg = self.table_name
+            if mode == FullTextScoringMode.MATCH:
+                match_arg = "TABLE {}".format(self.table_name)
+        if mode == FullTextScoringMode.MATCH:
+            return "MATCH ({}) AGAINST (%s)".format(match_arg), search_query
+        else:
+            return "{}({}, %s)".format(mode.value, match_arg), search_query
 
     def similarity_search_with_score(
         self,
@@ -745,17 +852,23 @@ class SingleStoreVectorStore(VectorStore):
         k: int = 4,
         filter: Optional[Union[dict, FilterTypedDict]] = None,
         search_strategy: SearchStrategy = SearchStrategy.VECTOR_ONLY,
-        filter_threshold: float = 1,
+        filter_threshold: float = 0,
         text_weight: float = 0.5,
         vector_weight: float = 0.5,
         vector_select_count_multiplier: int = 10,
+        full_text_scoring_mode: FullTextScoringMode = FullTextScoringMode.MATCH,
         **kwargs: Any,
     ) -> List[Tuple[Document, float]]:
-        """Return docs most similar to query. Uses cosine similarity.
+        """Return docs most similar to query.
+
+        Uses the configured distance_strategy (DOT_PRODUCT or EUCLIDEAN_DISTANCE)
+        to measure similarity between vectors.
 
         Args:
             query: Text to look up documents similar to.
+
             k: Number of Documents to return. Defaults to 4.
+
             filter: A dictionary to filter by metadata. Can be either:
 
                 1. Simple dict: ``{"field": "value", "status": "active"}``
@@ -768,30 +881,41 @@ class SingleStoreVectorStore(VectorStore):
                    - Logical: ``{"$and": [{...}, {...}]}``
 
                 Defaults to None.
+
             search_strategy (SearchStrategy): The search strategy to use.
                 Default is SearchStrategy.VECTOR_ONLY.
+
                 Available options are:
+
                 - SearchStrategy.VECTOR_ONLY: Searches only by vector similarity.
+
                 - SearchStrategy.TEXT_ONLY: Searches only by text similarity. This
                     option is only available if use_full_text_search is True.
+
                 - SearchStrategy.FILTER_BY_TEXT: Filters by text similarity and
                     searches by vector similarity. This option is only available if
                     use_full_text_search is True.
+
                 - SearchStrategy.FILTER_BY_VECTOR: Filters by vector similarity and
                     searches by text similarity. This option is only available if
                     use_full_text_search is True.
+
                 - SearchStrategy.WEIGHTED_SUM: Searches by a weighted sum of text and
                     vector similarity. This option is only available if
                     use_full_text_search is True and distance_strategy is DOT_PRODUCT.
+
             filter_threshold (float): The threshold for filtering by text or vector
                 similarity. Default is 0. This option has effect only if search_strategy
                 is SearchStrategy.FILTER_BY_TEXT or SearchStrategy.FILTER_BY_VECTOR.
+
             text_weight (float): The weight of text similarity in the weighted sum
                 search strategy. Default is 0.5. This option has effect only if
                 search_strategy is SearchStrategy.WEIGHTED_SUM.
+
             vector_weight (float): The weight of vector similarity in the weighted sum
                 search strategy. Default is 0.5. This option has effect only if
                 search_strategy is SearchStrategy.WEIGHTED_SUM.
+
             vector_select_count_multiplier (int): The multiplier for the number of
                 vectors to select when using the vector index. Default is 10.
                 This parameter has effect only if use_vector_index is True and
@@ -800,6 +924,30 @@ class SingleStoreVectorStore(VectorStore):
                 The number of vectors selected will
                 be k * vector_select_count_multiplier.
                 This is needed due to the limitations of the vector index.
+
+            full_text_scoring_mode (FullTextScoringMode): Specifies the algorithm
+                used to calculate text similarity scores. Defaults to
+                FullTextScoringMode.MATCH. This parameter only takes effect when
+                search_strategy is TEXT_ONLY, FILTER_BY_TEXT, FILTER_BY_VECTOR, or
+                WEIGHTED_SUM.
+
+                Available options:
+
+                - MATCH: Uses SingleStore's native MATCH() AGAINST() function.
+                    Returns a relevance score based on term frequency in the
+                    document. Compatible with both full-text index V1 and V2.
+
+                - BM25: Uses the BM25 (Best Matching 25) ranking algorithm.
+                    Provides more accurate relevance scoring by considering
+                    term frequency (TF), inverse document frequency (IDF), and
+                    document length normalization. Requires full-text index V2.
+
+                - BM25_GLOBAL: Similar to BM25, but computes IDF statistics
+                    across the entire dataset rather than per-partition. This
+                    can provide more consistent scoring in distributed
+                    environments but may have higher computational cost.
+                    Requires full-text index V2.
+
         Returns:
             List of Documents most similar to the query and score for each
             document.
@@ -812,7 +960,7 @@ class SingleStoreVectorStore(VectorStore):
             Basic Usage:
             .. code-block:: python
 
-                from langchain_community.vectorstores import SingleStoreVectorStore
+                from langchain_singlestore import SingleStoreVectorStore
                 from langchain_openai import OpenAIEmbeddings
 
                 s2 = SingleStoreVectorStore.from_documents(
@@ -827,7 +975,11 @@ class SingleStoreVectorStore(VectorStore):
 
             .. code-block:: python
 
-                from langchain_community.vectorstores import SingleStoreVectorStore
+                from langchain_singlestore import (
+                    SingleStoreVectorStore,
+                    FullTextIndexVersion,
+                    FullTextScoringMode,
+                )
                 from langchain_openai import OpenAIEmbeddings
 
                 s2 = SingleStoreVectorStore.from_documents(
@@ -836,15 +988,19 @@ class SingleStoreVectorStore(VectorStore):
                     host="username:password@localhost:3306/database",
                     use_full_text_search=True,
                     use_vector_index=True,
+                    full_text_index_version=FullTextIndexVersion.V2,
                 )
-                results = s2.similarity_search_with_score("query text", 1,
+                results = s2.similarity_search_with_score(
+                        "query text", 1,
                         search_strategy=SingleStoreVectorStore.SearchStrategy.FILTER_BY_VECTOR,
-                        filter_threshold=0.5)
+                        filter_threshold=0.5,
+                        full_text_scoring_mode=FullTextScoringMode.BM25,
+                )
 
             Weighted Sum Search Strategy:
             .. code-block:: python
 
-                from langchain_community.vectorstores import SingleStoreVectorStore
+                from langchain_singlestore import SingleStoreVectorStore
                 from langchain_openai import OpenAIEmbeddings
 
                 s2 = SingleStoreVectorStore.from_documents(
@@ -854,10 +1010,12 @@ class SingleStoreVectorStore(VectorStore):
                     use_full_text_search=True,
                     use_vector_index=True,
                 )
-                results = s2.similarity_search_with_score("query text", 1,
+                results = s2.similarity_search_with_score(
+                    "query text", 1,
                     search_strategy=SingleStoreVectorStore.SearchStrategy.WEIGHTED_SUM,
                     text_weight=0.3,
-                    vector_weight=0.7)
+                    vector_weight=0.7,
+                )
         """
 
         if (
@@ -879,6 +1037,17 @@ class SingleStoreVectorStore(VectorStore):
                 )
             )
 
+        if (
+            search_strategy != SingleStoreVectorStore.SearchStrategy.VECTOR_ONLY
+            and full_text_scoring_mode != FullTextScoringMode.MATCH
+            and self.full_text_index_version != FullTextIndexVersion.V2
+        ):
+            raise ValueError(
+                "Scoring {} is not supported with full-text index version {}".format(
+                    full_text_scoring_mode, self.full_text_index_version
+                )
+            )
+
         # Creates embedding vector from user query
         embedding = []
         if search_strategy != SingleStoreVectorStore.SearchStrategy.TEXT_ONLY:
@@ -896,15 +1065,11 @@ class SingleStoreVectorStore(VectorStore):
             arguments = []
 
             if search_strategy == SingleStoreVectorStore.SearchStrategy.FILTER_BY_TEXT:
-                match_arg = self.content_field
-                if self.full_text_index_version == FullTextIndexVersion.V1:
-                    where_clause_values.append(query)
-                else:
-                    where_clause_values.append(
-                        "{}:({})".format(self.content_field, query)
-                    )
-                    match_arg = "TABLE {}".format(self.table_name)
-                arguments.append("MATCH ({}) AGAINST (%s) > %s".format(match_arg))
+                function_sql, search_query = self._fulltext_scoring_mode_to_sql(
+                    full_text_scoring_mode, query
+                )
+                arguments.append("{} > %s".format(function_sql))
+                where_clause_values.append(search_query)
                 where_clause_values.append(float(filter_threshold))
 
             if (
@@ -973,19 +1138,18 @@ class SingleStoreVectorStore(VectorStore):
                     or search_strategy
                     == SingleStoreVectorStore.SearchStrategy.TEXT_ONLY
                 ):
-                    full_text_query = query
-                    match_arg = self.content_field
-                    if self.full_text_index_version != FullTextIndexVersion.V1:
-                        match_arg = "TABLE {}".format(self.table_name)
-                        full_text_query = "{}:({})".format(self.content_field, query)
-
+                    fulltext_score_query, full_text_query = (
+                        self._fulltext_scoring_mode_to_sql(
+                            full_text_scoring_mode, query
+                        )
+                    )
                     cur.execute(
-                        """SELECT {}, {}, {}, MATCH ({}) AGAINST (%s) as __score
+                        """SELECT {}, {}, {}, {} as __score
                         FROM {} {} ORDER BY __score DESC LIMIT %s""".format(
                             self.content_field,
                             self.metadata_field,
                             self.id_field,
-                            match_arg,
+                            fulltext_score_query,
                             self.table_name,
                             where_clause,
                         ),
@@ -995,15 +1159,15 @@ class SingleStoreVectorStore(VectorStore):
                     search_strategy
                     == SingleStoreVectorStore.SearchStrategy.WEIGHTED_SUM
                 ):
-                    full_text_query = query
-                    match_arg = self.content_field
-                    if self.full_text_index_version != FullTextIndexVersion.V1:
-                        full_text_query = "{}:({})".format(self.content_field, query)
-                        match_arg = "TABLE {}".format(self.table_name)
+                    fulltext_score_query, full_text_query = (
+                        self._fulltext_scoring_mode_to_sql(
+                            full_text_scoring_mode, query
+                        )
+                    )
                     cur.execute(
                         """SELECT {}, {}, r1.{} as {}, __score1 * %s + __score2 * %s
                         as __score FROM (
-                            SELECT {}, {}, {}, MATCH ({}) AGAINST (%s) as __score1 
+                            SELECT {}, {}, {}, {} as __score1
                         FROM {} {}) r1 FULL OUTER JOIN (
                             SELECT {}, {}({}, JSON_ARRAY_PACK(%s)) as __score2
                             FROM {} {} ORDER BY __score2 {} LIMIT %s
@@ -1015,7 +1179,7 @@ class SingleStoreVectorStore(VectorStore):
                             self.id_field,
                             self.content_field,
                             self.metadata_field,
-                            match_arg,
+                            fulltext_score_query,
                             self.table_name,
                             where_clause,
                             self.id_field,
@@ -1067,50 +1231,71 @@ class SingleStoreVectorStore(VectorStore):
         vector_index_options: Optional[dict] = None,
         vector_size: int = 1536,
         use_full_text_search: bool = False,
+        full_text_index_version: FullTextIndexVersion = DEFAULT_FULL_TEXT_INDEX_VERSION,
         pool_size: int = 5,
         max_overflow: int = 10,
         timeout: float = 30,
         **kwargs: Any,
     ) -> SingleStoreVectorStore:
         """Create a SingleStoreVectorStore vectorstore from raw documents.
+
         This is a user-friendly interface that:
+
             1. Embeds documents.
+
             2. Creates a new table for the embeddings in SingleStoreVectorStore.
+
             3. Adds the documents to the newly created table.
+
         This is intended to be a quick way to get started.
         Args:
+
             texts (List[str]): List of texts to add to the vectorstore.
+
             embedding (Embeddings): A text embedding model.
+
             metadatas (Optional[List[dict]], optional): Optional list of metadatas.
                 Defaults to None.
+
             distance_strategy (DistanceStrategy, optional):
                 Determines the strategy employed for calculating
                 the distance between vectors in the embedding space.
                 Defaults to DOT_PRODUCT.
+
                 Available options are:
+
                 - DOT_PRODUCT: Computes the scalar product of two vectors.
                     This is the default behavior
+
                 - EUCLIDEAN_DISTANCE: Computes the Euclidean distance between
                     two vectors. This metric considers the geometric distance in
                     the vector space, and might be more suitable for embeddings
                     that rely on spatial relationships. This metric is not
                     compatible with the WEIGHTED_SUM search strategy.
+
             table_name (str, optional): Specifies the name of the table in use.
                 Defaults to "embeddings".
+
             content_field (str, optional): Specifies the field to store the content.
                 Defaults to "content".
+
             metadata_field (str, optional): Specifies the field to store metadata.
                 Defaults to "metadata".
+
             vector_field (str, optional): Specifies the field to store the vector.
                 Defaults to "vector".
+
             id_field (str, optional): Specifies the field to store the id.
                 Defaults to "id".
+
             use_vector_index (bool, optional): Toggles the use of a vector index.
                 Works only with SingleStore 8.5 or later. Defaults to False.
                 If set to True, vector_size parameter is required to be set to
                 a proper value.
+
             vector_index_name (str, optional): Specifies the name of the vector index.
                 Defaults to empty. Will be ignored if use_vector_index is set to False.
+
             vector_index_options (dict, optional): Specifies the options for
                 the vector index. Defaults to {}.
                 Will be ignored if use_vector_index is set to False. The options are:
@@ -1118,10 +1303,12 @@ class SingleStoreVectorStore(VectorStore):
                     Defaults to IVF_PQFS.
                 For more options, please refer to the SingleStore documentation:
                 https://docs.singlestore.com/cloud/reference/sql-reference/vector-functions/vector-indexing/
+
             vector_size (int, optional): Specifies the size of the vector.
                 Defaults to 1536. Required if use_vector_index is set to True.
                 Should be set to the same value as the size of the vectors
                 stored in the vector_field.
+
             use_full_text_search (bool, optional): Toggles the use a full-text index
                 on the document content. Defaults to False. If set to True, the table
                 will be created with a full-text index on the content field,
@@ -1130,45 +1317,78 @@ class SingleStoreVectorStore(VectorStore):
                 If set to False, the similarity_search method will only allow
                 VECTOR_ONLY search strategy.
 
+            full_text_index_version (FullTextIndexVersion, optional): Determines the
+                version of the full-text index to use. Defaults to V1.
+
+                Available options are:
+
+                - V1: Uses the original full-text index implementation. This version
+                    is compatible with all versions of SingleStore, but does not
+                    support some of the advanced features of the full-text search,
+                    such as boolean mode and query expansion.
+
+                - V2: Uses the new full-text index implementation introduced in
+                    SingleStore 8.7. This version offers improved performance and
+                    additional features, but is only compatible with SingleStore 8.7
+                    or later. To use this version, it must be explicitly passed as
+                    the value of full_text_index_version.
+
             pool_size (int, optional): Determines the number of active connections in
                 the pool. Defaults to 5.
+
             max_overflow (int, optional): Determines the maximum number of connections
                 allowed beyond the pool_size. Defaults to 10.
+
             timeout (float, optional): Specifies the maximum wait time in seconds for
                 establishing a connection. Defaults to 30.
+
 
             Additional optional arguments provide further customization over the
             database connection:
 
             pure_python (bool, optional): Toggles the connector mode. If True,
                 operates in pure Python mode.
+
             local_infile (bool, optional): Allows local file uploads.
+
             charset (str, optional): Specifies the character set for string values.
+
             ssl_key (str, optional): Specifies the path of the file containing the SSL
                 key.
+
             ssl_cert (str, optional): Specifies the path of the file containing the SSL
                 certificate.
+
             ssl_ca (str, optional): Specifies the path of the file containing the SSL
                 certificate authority.
+
             ssl_cipher (str, optional): Sets the SSL cipher list.
+
             ssl_disabled (bool, optional): Disables SSL usage.
+
             ssl_verify_cert (bool, optional): Verifies the server's certificate.
                 Automatically enabled if ``ssl_ca`` is specified.
+
             ssl_verify_identity (bool, optional): Verifies the server's identity.
+
             conv (dict[int, Callable], optional): A dictionary of data conversion
                 functions.
+
             credential_type (str, optional): Specifies the type of authentication to
                 use: auth.PASSWORD, auth.JWT, or auth.BROWSER_SSO.
+
             autocommit (bool, optional): Enables autocommits.
+
             results_type (str, optional): Determines the structure of the query results:
                 tuples, namedtuples, dicts.
+
             results_format (str, optional): Deprecated. This option has been renamed to
                 results_type.
 
         Example:
             .. code-block:: python
 
-                from langchain_community.vectorstores import SingleStoreVectorStore
+                from langchain_singlestore import SingleStoreVectorStore
                 from langchain_openai import OpenAIEmbeddings
 
                 s2 = SingleStoreVectorStore.from_texts(
@@ -1194,6 +1414,7 @@ class SingleStoreVectorStore(VectorStore):
             vector_index_options=vector_index_options,
             vector_size=vector_size,
             use_full_text_search=use_full_text_search,
+            full_text_index_version=full_text_index_version,
             **kwargs,
         )
         instance.add_texts(texts, metadatas, embedding.embed_documents(texts), **kwargs)

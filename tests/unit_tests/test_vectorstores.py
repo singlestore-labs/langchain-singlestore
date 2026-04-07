@@ -5,7 +5,11 @@ from unittest.mock import MagicMock, patch
 
 from langchain_core.embeddings import Embeddings
 
-from langchain_singlestore._utils import DistanceStrategy
+from langchain_singlestore._utils import (
+    DistanceStrategy,
+    FullTextIndexVersion,
+    FullTextScoringMode,
+)
 from langchain_singlestore.vectorstores import SingleStoreVectorStore
 
 
@@ -243,6 +247,144 @@ class TestSingleStoreVectorStoreEmbeddings(unittest.TestCase):
         vs = SingleStoreVectorStore(embedding=embeddings, host="localhost")
 
         assert vs.embeddings is embeddings
+
+
+class TestFulltextScoringModeToSql(unittest.TestCase):
+    """Test _fulltext_scoring_mode_to_sql method."""
+
+    def setUp(self) -> None:
+        """Set up test fixtures."""
+        self.patcher = patch("langchain_singlestore.vectorstores.QueuePool")
+        self.mock_pool_class = self.patcher.start()
+        self.mock_pool = MagicMock()
+        self.mock_pool_class.return_value = self.mock_pool
+
+    def tearDown(self) -> None:
+        """Clean up patches."""
+        self.patcher.stop()
+
+    def test_match_mode_with_v1_index(self) -> None:
+        """Test MATCH mode with full-text index V1."""
+        embeddings = MockEmbeddings()
+        vs = SingleStoreVectorStore(
+            embedding=embeddings,
+            host="localhost",
+            use_full_text_search=True,
+            full_text_index_version=FullTextIndexVersion.V1,
+        )
+
+        sql, query = vs._fulltext_scoring_mode_to_sql(
+            FullTextScoringMode.MATCH, "test query"
+        )
+
+        assert sql == "MATCH (content) AGAINST (%s)"
+        assert query == "test query"
+
+    def test_match_mode_with_v2_index(self) -> None:
+        """Test MATCH mode with full-text index V2 uses TABLE syntax."""
+        embeddings = MockEmbeddings()
+        vs = SingleStoreVectorStore(
+            embedding=embeddings,
+            host="localhost",
+            use_full_text_search=True,
+            full_text_index_version=FullTextIndexVersion.V2,
+        )
+
+        sql, query = vs._fulltext_scoring_mode_to_sql(
+            FullTextScoringMode.MATCH, "test query"
+        )
+
+        assert sql == "MATCH (TABLE embeddings) AGAINST (%s)"
+        assert query == "content:(test query)"
+
+    def test_bm25_mode_with_v2_index(self) -> None:
+        """Test BM25 mode with full-text index V2."""
+        embeddings = MockEmbeddings()
+        vs = SingleStoreVectorStore(
+            embedding=embeddings,
+            host="localhost",
+            use_full_text_search=True,
+            full_text_index_version=FullTextIndexVersion.V2,
+        )
+
+        sql, query = vs._fulltext_scoring_mode_to_sql(
+            FullTextScoringMode.BM25, "test query"
+        )
+
+        assert sql == "BM25(embeddings, %s)"
+        assert query == "content:(test query)"
+
+    def test_bm25_global_mode_with_v2_index(self) -> None:
+        """Test BM25_GLOBAL mode with full-text index V2."""
+        embeddings = MockEmbeddings()
+        vs = SingleStoreVectorStore(
+            embedding=embeddings,
+            host="localhost",
+            use_full_text_search=True,
+            full_text_index_version=FullTextIndexVersion.V2,
+        )
+
+        sql, query = vs._fulltext_scoring_mode_to_sql(
+            FullTextScoringMode.BM25_GLOBAL, "test query"
+        )
+
+        assert sql == "BM25_GLOBAL(embeddings, %s)"
+        assert query == "content:(test query)"
+
+    def test_custom_content_field_with_v1(self) -> None:
+        """Test that custom content field is used in SQL with V1."""
+        embeddings = MockEmbeddings()
+        vs = SingleStoreVectorStore(
+            embedding=embeddings,
+            host="localhost",
+            use_full_text_search=True,
+            full_text_index_version=FullTextIndexVersion.V1,
+            content_field="text_content",
+        )
+
+        sql, query = vs._fulltext_scoring_mode_to_sql(
+            FullTextScoringMode.MATCH, "search terms"
+        )
+
+        assert sql == "MATCH (text_content) AGAINST (%s)"
+        assert query == "search terms"
+
+    def test_custom_content_field_with_v2_match(self) -> None:
+        """Test custom content field with V2 and MATCH mode."""
+        embeddings = MockEmbeddings()
+        vs = SingleStoreVectorStore(
+            embedding=embeddings,
+            host="localhost",
+            use_full_text_search=True,
+            full_text_index_version=FullTextIndexVersion.V2,
+            content_field="text_content",
+            table_name="my_docs",
+        )
+
+        sql, query = vs._fulltext_scoring_mode_to_sql(
+            FullTextScoringMode.MATCH, "search terms"
+        )
+
+        assert sql == "MATCH (TABLE my_docs) AGAINST (%s)"
+        assert query == "text_content:(search terms)"
+
+    def test_custom_content_field_with_v2_bm25(self) -> None:
+        """Test custom content field with V2 and BM25 mode."""
+        embeddings = MockEmbeddings()
+        vs = SingleStoreVectorStore(
+            embedding=embeddings,
+            host="localhost",
+            use_full_text_search=True,
+            full_text_index_version=FullTextIndexVersion.V2,
+            content_field="text_content",
+        )
+
+        sql, query = vs._fulltext_scoring_mode_to_sql(
+            FullTextScoringMode.BM25, "search terms"
+        )
+
+        assert sql == "BM25(embeddings, %s)"
+        assert query == "text_content:(search terms)"
 
 
 if __name__ == "__main__":
