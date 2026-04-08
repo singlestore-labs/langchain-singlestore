@@ -19,6 +19,7 @@ This package includes the following components:
 The `SingleStoreChatMessageHistory` class provides persistent storage for chat message history in SingleStore. This is essential for AI applications that need to maintain conversation context across sessions. It seamlessly integrates with LangChain's chat models and chains.
 
 **Key Features:**
+
 - Automatic schema creation and management
 - Support for multiple conversation sessions
 - Efficient message retrieval and storage
@@ -29,6 +30,7 @@ The `SingleStoreChatMessageHistory` class provides persistent storage for chat m
 The `SingleStoreSemanticCache` class implements semantic caching for LLM responses using SingleStore's vector capabilities. Instead of exact string matching, it uses embeddings to find semantically similar cached queries, dramatically reducing API costs and improving performance for similar questions.
 
 **Key Features:**
+
 - Vector-based semantic similarity for cache hits
 - Reduces LLM API calls for similar queries
 - Configurable similarity threshold
@@ -39,6 +41,7 @@ The `SingleStoreSemanticCache` class implements semantic caching for LLM respons
 The `SingleStoreVectorStore` class provides a powerful document storage and retrieval system with combined vector and full-text search capabilities. It supports multiple search strategies, advanced metadata filtering, and both vector and text-based indexing for optimal performance.
 
 **Key Features:**
+
 - Hybrid search combining vector and text indexes
 - Multiple search strategies (VECTOR_ONLY, TEXT_ONLY, FILTER_BY_TEXT, FILTER_BY_VECTOR, WEIGHTED_SUM)
 - Simple and advanced metadata filtering
@@ -46,12 +49,14 @@ The `SingleStoreVectorStore` class provides a powerful document storage and retr
 - Configurable distance metrics (DOT_PRODUCT, EUCLIDEAN_DISTANCE)
 - Full-text index versions (V1, V2) with different capabilities
 - Multiple text scoring algorithms (MATCH, BM25, BM25_GLOBAL)
+- Pre-computed embeddings support for texts, documents, images, and queries
 
 ### SQL Database Retriever
 
 The `SingleStoreSQLDatabaseRetriever` enables LangChain agents and chains to execute SQL queries directly against SingleStore and retrieve results as structured documents.
 
 **Key Features:**
+
 - Execute SQL queries and convert results to documents
 - Flexible row-to-document conversion with custom handlers
 - Connection pooling for efficient resource management
@@ -320,15 +325,183 @@ results = vector_store.similarity_search(
 | BM25_GLOBAL | BM25 with global IDF statistics | V2 only | Consistent scoring in distributed/sharded environments |
 
 **When to use each mode:**
+
 - **MATCH**: Default mode. Fast, simple keyword matching. Good for basic search needs.
 - **BM25**: Better relevance ranking by considering term frequency, inverse document frequency, and document length. Recommended for most text search applications.
 - **BM25_GLOBAL**: Same as BM25 but calculates statistics globally across all partitions. Use when you need consistent scoring across a distributed SingleStore cluster.
+
+#### Pre-computed Embeddings
+
+SingleStoreVectorStore supports using pre-computed embeddings instead of generating them at runtime. This is useful when:
+
+- You have embeddings from a different source or model
+- You want to avoid repeated embedding API calls
+- You're migrating data from another vector store
+- You need to use custom or fine-tuned embedding models outside LangChain
+
+**Adding Texts with Pre-computed Embeddings:**
+
+```python
+from langchain_singlestore import SingleStoreVectorStore
+
+# Initialize vector store (embedding model still needed for the interface)
+vector_store = SingleStoreVectorStore(
+    embedding=some_embedding_model,
+    host="127.0.0.1:3306/db",
+)
+
+# Your pre-computed embeddings (e.g., from a batch processing job)
+texts = [
+    "The Eiffel Tower is in Paris.",
+    "Big Ben is in London.",
+    "The Colosseum is in Rome.",
+]
+precomputed_embeddings = [
+    [0.1, 0.2, 0.3, ...],  # embedding for text 1
+    [0.4, 0.5, 0.6, ...],  # embedding for text 2
+    [0.7, 0.8, 0.9, ...],  # embedding for text 3
+]
+metadatas = [
+    {"city": "Paris"},
+    {"city": "London"},
+    {"city": "Rome"},
+]
+
+# Add texts with pre-computed embeddings (bypasses the embedding model)
+ids = vector_store.add_texts(
+    texts=texts,
+    metadatas=metadatas,
+    embeddings=precomputed_embeddings,  # Pre-computed embeddings
+)
+```
+
+**Adding Documents with Pre-computed Embeddings:**
+
+```python
+from langchain_core.documents import Document
+
+documents = [
+    Document(page_content="The Eiffel Tower is in Paris.", metadata={"city": "Paris"}),
+    Document(page_content="Big Ben is in London.", metadata={"city": "London"}),
+    Document(page_content="The Colosseum is in Rome.", metadata={"city": "Rome"}),
+]
+precomputed_embeddings = [
+    [0.1, 0.2, 0.3, ...],
+    [0.4, 0.5, 0.6, ...],
+    [0.7, 0.8, 0.9, ...],
+]
+
+# Add documents with pre-computed embeddings
+ids = vector_store.add_documents(
+    documents=documents,
+    embeddings=precomputed_embeddings,
+)
+```
+
+**Adding Images with Pre-computed Embeddings:**
+
+```python
+image_uris = [
+    "path/to/image1.jpg",
+    "path/to/image2.jpg",
+    "path/to/image3.jpg",
+]
+precomputed_image_embeddings = [
+    [0.1, 0.2, 0.3, ...],  # embedding for image 1
+    [0.4, 0.5, 0.6, ...],  # embedding for image 2
+    [0.7, 0.8, 0.9, ...],  # embedding for image 3
+]
+
+# Add images with pre-computed embeddings
+ids = vector_store.add_images(
+    uris=image_uris,
+    embeddings=precomputed_image_embeddings,
+)
+```
+
+**Similarity Search with Pre-computed Query Embedding:**
+
+```python
+# Your pre-computed query embedding
+query_embedding = [0.15, 0.25, 0.35, ...]
+
+# Search using pre-computed query embedding (bypasses embed_query)
+results = vector_store.similarity_search(
+    query="landmarks",  # Query text (used for full-text search strategies)
+    k=5,
+    query_embedding=query_embedding,  # Pre-computed embedding for vector search
+)
+
+# Also works with similarity_search_with_score
+results_with_scores = vector_store.similarity_search_with_score(
+    query="landmarks",
+    k=5,
+    query_embedding=query_embedding,
+)
+```
+
+**Using from_texts with Pre-computed Embeddings:**
+
+```python
+# Create vector store and add texts in one step with pre-computed embeddings
+vector_store = SingleStoreVectorStore.from_texts(
+    texts=texts,
+    embedding=some_embedding_model,  # Required for interface, but won't be called
+    metadatas=metadatas,
+    embeddings=precomputed_embeddings,  # Pre-computed embeddings
+    host="127.0.0.1:3306/db",
+)
+```
+
+**Using from_documents with Pre-computed Embeddings:**
+
+```python
+# Create vector store and add documents in one step with pre-computed embeddings
+vector_store = SingleStoreVectorStore.from_documents(
+    documents=documents,
+    embedding=some_embedding_model,  # Required for interface, but won't be called
+    embeddings=precomputed_embeddings,  # Pre-computed embeddings
+    host="127.0.0.1:3306/db",
+)
+```
+
+**Combined with Search Strategies:**
+
+Pre-computed embeddings work with all search strategies:
+
+```python
+# VECTOR_ONLY with pre-computed query embedding
+results = vector_store.similarity_search(
+    query="landmarks",
+    k=5,
+    query_embedding=query_embedding,
+    search_strategy=SingleStoreVectorStore.SearchStrategy.VECTOR_ONLY,
+)
+
+# TEXT_ONLY doesn't use query embedding (pure full-text search)
+results = vector_store.similarity_search(
+    query="Eiffel Tower Paris",
+    k=5,
+    search_strategy=SingleStoreVectorStore.SearchStrategy.TEXT_ONLY,
+)
+
+# WEIGHTED_SUM with pre-computed query embedding
+results = vector_store.similarity_search(
+    query="famous landmarks",
+    k=5,
+    query_embedding=query_embedding,
+    search_strategy=SingleStoreVectorStore.SearchStrategy.WEIGHTED_SUM,
+    text_weight=0.3,
+    vector_weight=0.7,
+)
+```
 
 ### Document Loader
 
 The `SingleStoreLoader` class provides efficient loading of documents directly from SingleStore database tables. This is ideal for applications that need to process documents stored in your database without intermediate file exports, enabling seamless ETL workflows.
 
 **Key Features:**
+
 - Load documents from any database table
 - Configurable content and metadata fields
 - Efficient batch processing
@@ -367,6 +540,7 @@ vector_store.add_documents(chunked_docs)
 The `SingleStoreSQLDatabaseRetriever` enables LangChain agents and chains to execute SQL queries directly against a SingleStore database and retrieve results formatted as documents. This is perfect for building database-aware AI applications that need to query structured data.
 
 **Key Features:**
+
 - Execute SQL queries and retrieve results as documents
 - Flexible row-to-document conversion with custom handlers
 - Connection pooling for efficient resource management
