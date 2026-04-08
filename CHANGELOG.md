@@ -5,6 +5,61 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.5.0] - 2026-04-08
+
+### Added
+
+#### Pre-computed Embeddings Support
+- **New `embeddings` parameter** in `add_texts`, `add_documents`, and `add_images` methods
+  - Allows bypassing the embedding model by providing pre-computed embedding vectors
+  - Useful when embeddings are generated externally, migrating from other vector stores, or using custom embedding models
+- **New `query_embedding` parameter** in `similarity_search` and `similarity_search_with_score` methods
+  - Enables searching with pre-computed query embeddings instead of generating them at runtime
+  - Reduces API calls to embedding services for repeated or batched queries
+- **New `embeddings` parameter** in `from_texts` and `from_documents` class methods
+  - Supports pre-computed embeddings when creating vectorstore instances
+
+#### Embedding Validation
+- **Length validation**: Validates that the number of pre-computed embeddings matches the number of texts/documents/images
+- **Vector size validation**: When `use_vector_index=True`, validates that each embedding vector dimension matches the configured `vector_size`
+- **Query embedding validation**: Validates query embedding size matches `vector_size` when using vector index
+
+#### Enhanced Documentation
+- Added comprehensive "Pre-computed Embeddings" section to README with examples for:
+  - Adding texts, documents, and images with pre-computed embeddings
+  - Searching with pre-computed query embeddings
+  - Using `from_texts` and `from_documents` with pre-computed embeddings
+  - Combining pre-computed embeddings with different search strategies
+- Updated "Key Features" list to mention pre-computed embeddings support
+- Added `Raises` sections to method docstrings documenting `ValueError` conditions
+
+#### New Integration Tests
+- **`TestPrecomputedEmbeddingsVectorStoreCreation`**: Tests for vectorstore creation with pre-computed embeddings via constructor, `from_texts`, and `from_documents`
+- **`TestPrecomputedEmbeddingsAddImages`**: Tests for adding images with pre-computed embeddings
+- **`TestPrecomputedEmbeddingsSimilaritySearch`**: Tests for all search strategies (VECTOR_ONLY, TEXT_ONLY, FILTER_BY_TEXT, FILTER_BY_VECTOR, WEIGHTED_SUM) with pre-computed embeddings
+- **`TestPrecomputedEmbeddingsAdvancedFiltering`**: Tests for FilterTypedDict operators with pre-computed embeddings
+- **`TestPrecomputedEmbeddingsValidation`**: Tests for embedding length and vector size validation
+- **`ErrorEmbeddings`** test utility class that raises errors if accidentally called, ensuring pre-computed embeddings are used
+- **`StoreTracker`** fixture for automatic vectorstore cleanup in tests
+
+### Changed (Potential Breaking)
+
+The following methods now use keyword-only arguments (after `*`) for certain parameters. Code that passes these arguments positionally will need to be updated to use keyword syntax:
+
+- **`add_images`**: `embeddings` parameter is now keyword-only
+  - Before: `store.add_images(uris, metadatas, embeddings)`
+  - After: `store.add_images(uris, metadatas, embeddings=embeddings)`
+
+- **`similarity_search`** and **`similarity_search_with_score`**: `query_embedding`, `search_strategy`, `filter_threshold`, `text_weight`, `vector_weight`, `vector_select_count_multiplier`, and `full_text_scoring_mode` are now keyword-only
+  - Before: `store.similarity_search(query, k, filter, query_embedding, search_strategy)`
+  - After: `store.similarity_search(query, k, filter, query_embedding=query_embedding, search_strategy=search_strategy)`
+
+- **`from_texts`**: `embeddings`, `distance_strategy`, `table_name`, and all other configuration parameters are now keyword-only
+  - Before: `SingleStoreVectorStore.from_texts(texts, embedding, metadatas, embeddings, distance_strategy)`
+  - After: `SingleStoreVectorStore.from_texts(texts, embedding, metadatas, embeddings=embeddings, distance_strategy=distance_strategy)`
+
+**Note**: If you were already passing these arguments as keyword arguments (recommended practice), no changes are required.
+
 ## [1.4.0] - 2026-04-07
 
 ### Added
