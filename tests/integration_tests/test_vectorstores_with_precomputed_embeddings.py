@@ -980,7 +980,11 @@ class TestPrecomputedEmbeddingsSimilaritySearch:
         full_text_index_version: FullTextIndexVersion,
     ) -> None:
         """Test FILTER_BY_VECTOR search with pre-computed embeddings."""
-        threshold = 0.2 if full_text_index_version == FullTextIndexVersion.V2 else -0.2
+        threshold = (
+            0.2
+            if full_text_index_version == FullTextIndexVersion.V2
+            else -0.2
+        )
         store = store_tracker.create(
             embedding=ErrorEmbeddings(),
             use_full_text_search=True,
