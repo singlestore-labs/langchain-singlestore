@@ -1455,3 +1455,402 @@ class TestPrecomputedEmbeddingsAdvancedFiltering:
         assert len(results) > 0
         for doc in results:
             assert doc.metadata["views"] > 100
+
+
+class TestPrecomputedEmbeddingsValidation:
+    """Test validation of pre-computed embeddings length and vector size."""
+
+    @pytest.fixture
+    def sample_texts(self) -> List[str]:
+        """Sample texts for testing."""
+        return [
+            "The quick brown fox jumps over the lazy dog.",
+            "A journey of a thousand miles begins with a single step.",
+            "To be or not to be, that is the question.",
+        ]
+
+    # ============================================================
+    # add_texts validation tests
+    # ============================================================
+
+    def test_add_texts_validates_embeddings_length_mismatch(
+        self,
+        store_tracker: StoreTracker,
+        clean_db_url: str,
+        sample_texts: List[str],
+    ) -> None:
+        """Test that add_texts raises error when embeddings count doesn't match."""
+        store = store_tracker.create(
+            embedding=ErrorEmbeddings(),
+            host=clean_db_url,
+            database=TEST_DB_NAME,
+        )
+        # Provide fewer embeddings than texts
+        embeddings = generate_embeddings(2)  # Only 2 embeddings for 3 texts
+
+        with pytest.raises(ValueError) as exc_info:
+            store.add_texts(texts=sample_texts, embeddings=embeddings)
+
+        assert "number of embeddings must match the number of texts" in str(
+            exc_info.value
+        )
+
+    def test_add_texts_validates_embeddings_length_too_many(
+        self,
+        store_tracker: StoreTracker,
+        clean_db_url: str,
+        sample_texts: List[str],
+    ) -> None:
+        """Test that add_texts raises error when too many embeddings provided."""
+        store = store_tracker.create(
+            embedding=ErrorEmbeddings(),
+            host=clean_db_url,
+            database=TEST_DB_NAME,
+        )
+        # Provide more embeddings than texts
+        embeddings = generate_embeddings(5)  # 5 embeddings for 3 texts
+
+        with pytest.raises(ValueError) as exc_info:
+            store.add_texts(texts=sample_texts, embeddings=embeddings)
+
+        assert "number of embeddings must match the number of texts" in str(
+            exc_info.value
+        )
+
+    def test_add_texts_validates_vector_size_with_vector_index(
+        self,
+        store_tracker: StoreTracker,
+        clean_db_url: str,
+        sample_texts: List[str],
+    ) -> None:
+        """Test that add_texts validates vector size matches vector_size setting."""
+        vector_size = 10
+        store = store_tracker.create(
+            embedding=ErrorEmbeddings(),
+            use_vector_index=True,
+            vector_size=vector_size,
+            host=clean_db_url,
+            database=TEST_DB_NAME,
+        )
+        # Provide embeddings with wrong dimension (5 instead of 10)
+        wrong_size_embeddings = generate_embeddings(len(sample_texts), size=5)
+
+        with pytest.raises(ValueError) as exc_info:
+            store.add_texts(texts=sample_texts, embeddings=wrong_size_embeddings)
+
+        assert "does not match the specified vector_size" in str(exc_info.value)
+
+    def test_add_texts_accepts_correct_vector_size_with_vector_index(
+        self,
+        store_tracker: StoreTracker,
+        clean_db_url: str,
+        sample_texts: List[str],
+    ) -> None:
+        """Test that add_texts accepts embeddings with correct vector size."""
+        vector_size = 10
+        store = store_tracker.create(
+            embedding=ErrorEmbeddings(),
+            use_vector_index=True,
+            vector_size=vector_size,
+            host=clean_db_url,
+            database=TEST_DB_NAME,
+        )
+        # Provide embeddings with correct dimension
+        correct_embeddings = generate_embeddings(len(sample_texts), size=vector_size)
+
+        # Should not raise
+        ids = store.add_texts(texts=sample_texts, embeddings=correct_embeddings)
+        assert len(ids) == len(sample_texts)
+
+    def test_add_texts_no_vector_size_validation_without_vector_index(
+        self,
+        store_tracker: StoreTracker,
+        clean_db_url: str,
+        sample_texts: List[str],
+    ) -> None:
+        """Test that vector size is not validated when not using vector index."""
+        store = store_tracker.create(
+            embedding=ErrorEmbeddings(),
+            use_vector_index=False,  # No vector index
+            host=clean_db_url,
+            database=TEST_DB_NAME,
+        )
+        # Any embedding size should work without vector index
+        embeddings = generate_embeddings(len(sample_texts), size=5)
+
+        # Should not raise
+        ids = store.add_texts(texts=sample_texts, embeddings=embeddings)
+        assert len(ids) == len(sample_texts)
+
+    # ============================================================
+    # add_images validation tests
+    # ============================================================
+
+    def test_add_images_validates_embeddings_length_mismatch(
+        self,
+        store_tracker: StoreTracker,
+        clean_db_url: str,
+    ) -> None:
+        """Test that add_images raises error when embeddings count doesn't match."""
+        store = store_tracker.create(
+            embedding=ErrorEmbeddings(),
+            host=clean_db_url,
+            database=TEST_DB_NAME,
+        )
+        image_uris = ["image1.jpg", "image2.jpg", "image3.jpg"]
+        # Provide fewer embeddings than images
+        embeddings = generate_embeddings(2)  # Only 2 embeddings for 3 images
+
+        with pytest.raises(ValueError) as exc_info:
+            store.add_images(uris=image_uris, embeddings=embeddings)
+
+        assert "Length of embeddings must match length of uris" in str(exc_info.value)
+
+    def test_add_images_validates_embeddings_length_too_many(
+        self,
+        store_tracker: StoreTracker,
+        clean_db_url: str,
+    ) -> None:
+        """Test that add_images raises error when too many embeddings provided."""
+        store = store_tracker.create(
+            embedding=ErrorEmbeddings(),
+            host=clean_db_url,
+            database=TEST_DB_NAME,
+        )
+        image_uris = ["image1.jpg", "image2.jpg", "image3.jpg"]
+        # Provide more embeddings than images
+        embeddings = generate_embeddings(5)  # 5 embeddings for 3 images
+
+        with pytest.raises(ValueError) as exc_info:
+            store.add_images(uris=image_uris, embeddings=embeddings)
+
+        assert "Length of embeddings must match length of uris" in str(exc_info.value)
+
+    def test_add_images_validates_vector_size_with_vector_index(
+        self,
+        store_tracker: StoreTracker,
+        clean_db_url: str,
+    ) -> None:
+        """Test that add_images validates vector size matches vector_size setting."""
+        vector_size = 10
+        store = store_tracker.create(
+            embedding=ErrorEmbeddings(),
+            use_vector_index=True,
+            vector_size=vector_size,
+            host=clean_db_url,
+            database=TEST_DB_NAME,
+        )
+        image_uris = ["image1.jpg", "image2.jpg", "image3.jpg"]
+        # Provide embeddings with wrong dimension (5 instead of 10)
+        wrong_size_embeddings = generate_embeddings(len(image_uris), size=5)
+
+        with pytest.raises(ValueError) as exc_info:
+            store.add_images(uris=image_uris, embeddings=wrong_size_embeddings)
+
+        assert "does not match the specified vector_size" in str(exc_info.value)
+
+    def test_add_images_accepts_correct_vector_size_with_vector_index(
+        self,
+        store_tracker: StoreTracker,
+        clean_db_url: str,
+    ) -> None:
+        """Test that add_images accepts embeddings with correct vector size."""
+        vector_size = 10
+        store = store_tracker.create(
+            embedding=ErrorEmbeddings(),
+            use_vector_index=True,
+            vector_size=vector_size,
+            host=clean_db_url,
+            database=TEST_DB_NAME,
+        )
+        image_uris = ["image1.jpg", "image2.jpg", "image3.jpg"]
+        # Provide embeddings with correct dimension
+        correct_embeddings = generate_embeddings(len(image_uris), size=vector_size)
+
+        # Should not raise
+        ids = store.add_images(uris=image_uris, embeddings=correct_embeddings)
+        assert len(ids) == len(image_uris)
+
+    # ============================================================
+    # add_documents validation tests (via add_texts)
+    # ============================================================
+
+    def test_add_documents_validates_embeddings_length_mismatch(
+        self,
+        store_tracker: StoreTracker,
+        clean_db_url: str,
+    ) -> None:
+        """Test that add_documents raises error when embeddings count doesn't match."""
+        store = store_tracker.create(
+            embedding=ErrorEmbeddings(),
+            host=clean_db_url,
+            database=TEST_DB_NAME,
+        )
+        documents = [
+            Document(page_content="doc 1"),
+            Document(page_content="doc 2"),
+            Document(page_content="doc 3"),
+        ]
+        # Provide fewer embeddings than documents
+        embeddings = generate_embeddings(2)  # Only 2 embeddings for 3 documents
+
+        with pytest.raises(ValueError) as exc_info:
+            store.add_documents(documents=documents, embeddings=embeddings)
+
+        assert "number of embeddings must match the number of texts" in str(
+            exc_info.value
+        )
+
+    # ============================================================
+    # from_texts validation tests
+    # ============================================================
+
+    def test_from_texts_validates_embeddings_length_mismatch(
+        self,
+        store_tracker: StoreTracker,
+        clean_db_url: str,
+        sample_texts: List[str],
+    ) -> None:
+        """Test that from_texts raises error when embeddings count doesn't match."""
+        # Provide fewer embeddings than texts
+        embeddings = generate_embeddings(2)  # Only 2 embeddings for 3 texts
+
+        with pytest.raises(ValueError) as exc_info:
+            store_tracker.create_from_texts(
+                texts=sample_texts,
+                embedding=ErrorEmbeddings(),
+                embeddings=embeddings,
+                host=clean_db_url,
+                database=TEST_DB_NAME,
+            )
+
+        assert "number of embeddings must match the number of texts" in str(
+            exc_info.value
+        )
+
+    # ============================================================
+    # from_documents validation tests (via from_texts)
+    # ============================================================
+
+    def test_from_documents_validates_embeddings_length_mismatch(
+        self,
+        store_tracker: StoreTracker,
+        clean_db_url: str,
+    ) -> None:
+        """Test from_documents raises error when embeddings count doesn't match."""
+        documents = [
+            Document(page_content="doc 1"),
+            Document(page_content="doc 2"),
+            Document(page_content="doc 3"),
+        ]
+        # Provide fewer embeddings than documents
+        embeddings = generate_embeddings(2)  # Only 2 embeddings for 3 documents
+
+        with pytest.raises(ValueError) as exc_info:
+            store_tracker.create_from_documents(
+                documents=documents,
+                embedding=ErrorEmbeddings(),
+                embeddings=embeddings,
+                host=clean_db_url,
+                database=TEST_DB_NAME,
+            )
+
+        assert "number of embeddings must match the number of texts" in str(
+            exc_info.value
+        )
+
+    # ============================================================
+    # similarity_search query_embedding validation tests
+    # ============================================================
+
+    def test_similarity_search_validates_query_embedding_size_with_vector_index(
+        self,
+        store_tracker: StoreTracker,
+        clean_db_url: str,
+        sample_texts: List[str],
+    ) -> None:
+        """Test similarity_search validates query embedding size with vector index."""
+        vector_size = 10
+        store = store_tracker.create(
+            embedding=ErrorEmbeddings(),
+            use_vector_index=True,
+            vector_size=vector_size,
+            host=clean_db_url,
+            database=TEST_DB_NAME,
+        )
+        # Add texts with correct embedding size
+        correct_embeddings = generate_embeddings(len(sample_texts), size=vector_size)
+        store.add_texts(texts=sample_texts, embeddings=correct_embeddings)
+
+        # Try to search with wrong query embedding size (5 instead of 10)
+        wrong_query_embedding = generate_embedding(0, size=5)
+
+        with pytest.raises(ValueError) as exc_info:
+            store.similarity_search(
+                query="test",
+                k=1,
+                query_embedding=wrong_query_embedding,
+            )
+
+        assert "does not match vector size" in str(exc_info.value)
+
+    def test_similarity_search_accepts_correct_query_embedding_size(
+        self,
+        store_tracker: StoreTracker,
+        clean_db_url: str,
+        sample_texts: List[str],
+    ) -> None:
+        """Test similarity_search accepts query embedding with correct size."""
+        vector_size = 10
+        store = store_tracker.create(
+            embedding=ErrorEmbeddings(),
+            use_vector_index=True,
+            vector_size=vector_size,
+            host=clean_db_url,
+            database=TEST_DB_NAME,
+        )
+        # Add texts with correct embedding size
+        correct_embeddings = generate_embeddings(len(sample_texts), size=vector_size)
+        store.add_texts(texts=sample_texts, embeddings=correct_embeddings)
+
+        # Search with correct query embedding size
+        correct_query_embedding = generate_embedding(0, size=vector_size)
+
+        # Should not raise
+        results = store.similarity_search(
+            query="test",
+            k=1,
+            query_embedding=correct_query_embedding,
+        )
+        assert len(results) == 1
+
+    def test_similarity_search_with_score_validates_query_embedding_size(
+        self,
+        store_tracker: StoreTracker,
+        clean_db_url: str,
+        sample_texts: List[str],
+    ) -> None:
+        """Test similarity_search_with_score validates query embedding size."""
+        vector_size = 10
+        store = store_tracker.create(
+            embedding=ErrorEmbeddings(),
+            use_vector_index=True,
+            vector_size=vector_size,
+            host=clean_db_url,
+            database=TEST_DB_NAME,
+        )
+        # Add texts with correct embedding size
+        correct_embeddings = generate_embeddings(len(sample_texts), size=vector_size)
+        store.add_texts(texts=sample_texts, embeddings=correct_embeddings)
+
+        # Try to search with wrong query embedding size
+        wrong_query_embedding = generate_embedding(0, size=5)
+
+        with pytest.raises(ValueError) as exc_info:
+            store.similarity_search_with_score(
+                query="test",
+                k=1,
+                query_embedding=wrong_query_embedding,
+            )
+
+        assert "does not match vector size" in str(exc_info.value)

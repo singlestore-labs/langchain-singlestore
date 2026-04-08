@@ -565,14 +565,35 @@ class SingleStoreVectorStore(VectorStore):
 
         Returns:
             List[str]: list of document ids added to the vectorstore
+
+        Raises:
+            ValueError: If embeddings list length doesn't match texts count,
+                or if embedding vector size doesn't match vector_size when using
+                vector index.
         """
+        # Convert texts to list for length validation and iteration
+        texts_list = list(texts)
+
+        if embeddings is not None and len(embeddings) != len(texts_list):
+            raise ValueError("The number of embeddings must match the number of texts")
+
+        if (
+            embeddings is not None
+            and self.use_vector_index
+            and len(embeddings) > 0
+            and len(embeddings[0]) != self.vector_size
+        ):
+            raise ValueError(
+                "Pre-computed embedding size does not match the specified vector_size"
+            )
+
         result_ids: List[str] = []
         conn = self.connection_pool.connect()
         try:
             cur = conn.cursor()
             try:
                 # Write data to singlestore db
-                for i, text in enumerate(texts):
+                for i, text in enumerate(texts_list):
                     # Use provided values by default or fallback
                     metadata = metadatas[i] if metadatas else {}
                     embedding = (
