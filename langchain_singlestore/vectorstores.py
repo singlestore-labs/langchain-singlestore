@@ -521,20 +521,24 @@ class SingleStoreVectorStore(VectorStore):
 
         Returns:
             List[str]: list of document ids added to the vectorstore
+
+        Raises:
+            ValueError: If embeddings list length doesn't match uris length.
+            ValueError: If any embedding vector size doesn't match vector_size
+                when use_vector_index is True.
         """
 
         if embeddings is not None and len(embeddings) != len(uris):
             raise ValueError("Length of embeddings must match length of uris")
 
-        if (
-            embeddings is not None
-            and len(embeddings) > 0
-            and self.use_vector_index
-            and len(embeddings[0]) != self.vector_size
-        ):
-            raise ValueError(
-                "Pre-computed embedding size does not match the specified vector_size"
-            )
+        if embeddings is not None and len(embeddings) > 0 and self.use_vector_index:
+            if any(
+                len(embedding_vector) != self.vector_size
+                for embedding_vector in embeddings
+            ):
+                raise ValueError(
+                    "Pre-computed embedding size does not match the vector_size"
+                )
 
         # Set embeddings
         if (
@@ -578,15 +582,14 @@ class SingleStoreVectorStore(VectorStore):
         if embeddings is not None and len(embeddings) != len(texts_list):
             raise ValueError("The number of embeddings must match the number of texts")
 
-        if (
-            embeddings is not None
-            and self.use_vector_index
-            and len(embeddings) > 0
-            and len(embeddings[0]) != self.vector_size
-        ):
-            raise ValueError(
-                "Pre-computed embedding size does not match the specified vector_size"
-            )
+        if embeddings is not None and self.use_vector_index and len(embeddings) > 0:
+            if any(
+                len(embedding_vector) != self.vector_size
+                for embedding_vector in embeddings
+            ):
+                raise ValueError(
+                    "Pre-computed embedding size does not match the vector_size"
+                )
 
         result_ids: List[str] = []
         conn = self.connection_pool.connect()
@@ -798,6 +801,16 @@ class SingleStoreVectorStore(VectorStore):
         Returns:
             List[Document]: A list of documents that are most similar to the query text.
 
+        Raises:
+            ValueError: If search_strategy is not VECTOR_ONLY and
+                use_full_text_search is False.
+            ValueError: If search_strategy is WEIGHTED_SUM and distance_strategy
+                is not DOT_PRODUCT.
+            ValueError: If full_text_scoring_mode is BM25 or BM25_GLOBAL and
+                full_text_index_version is not V2.
+            ValueError: If query_embedding is provided and its size doesn't match
+                vector_size when use_vector_index is True.
+
         Examples:
 
             Basic Usage:
@@ -1002,8 +1015,14 @@ class SingleStoreVectorStore(VectorStore):
             document.
 
         Raises:
-            ValueError: If the search strategy is not supported with the
-                distance strategy.
+            ValueError: If search_strategy is not VECTOR_ONLY and
+                use_full_text_search is False.
+            ValueError: If search_strategy is WEIGHTED_SUM and distance_strategy
+                is not DOT_PRODUCT.
+            ValueError: If full_text_scoring_mode is BM25 or BM25_GLOBAL and
+                full_text_index_version is not V2.
+            ValueError: If query_embedding is provided and its size doesn't match
+                vector_size when use_vector_index is True.
 
         Examples:
             Basic Usage:
@@ -1449,6 +1468,14 @@ class SingleStoreVectorStore(VectorStore):
             results_format (str, optional): Deprecated. This option has been renamed to
                 results_type.
 
+        Returns:
+            SingleStoreVectorStore: A new vectorstore instance with the texts added.
+
+        Raises:
+            ValueError: If embeddings list length doesn't match texts length.
+            ValueError: If any embedding vector size doesn't match vector_size
+                when use_vector_index is True.
+
         Example:
             .. code-block:: python
 
@@ -1466,7 +1493,9 @@ class SingleStoreVectorStore(VectorStore):
             raise ValueError("The number of embeddings must match the number of texts")
 
         if use_vector_index and embeddings is not None and len(embeddings) > 0:
-            if any(len(embedding_vector) != vector_size for embedding_vector in embeddings):
+            if any(
+                len(embedding_vector) != vector_size for embedding_vector in embeddings
+            ):
                 raise ValueError(
                     "All pre-computed embeddings must match the specified vector_size"
                 )
