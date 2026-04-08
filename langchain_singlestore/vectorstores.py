@@ -1465,15 +1465,11 @@ class SingleStoreVectorStore(VectorStore):
         if embeddings is not None and len(embeddings) != len(texts):
             raise ValueError("The number of embeddings must match the number of texts")
 
-        if (
-            use_vector_index
-            and embeddings is not None
-            and len(embeddings) > 0
-            and vector_size != len(embeddings[0])
-        ):
-            raise ValueError(
-                "Pre-computed embedding size does not match the specified vector_size"
-            )
+        if use_vector_index and embeddings is not None and len(embeddings) > 0:
+            if any(len(embedding_vector) != vector_size for embedding_vector in embeddings):
+                raise ValueError(
+                    "All pre-computed embeddings must match the specified vector_size"
+                )
 
         instance = cls(
             embedding,
