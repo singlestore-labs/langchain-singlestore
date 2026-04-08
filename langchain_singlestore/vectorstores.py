@@ -656,6 +656,7 @@ class SingleStoreVectorStore(VectorStore):
         query: str,
         k: int = 4,
         filter: Optional[Union[dict, FilterTypedDict]] = None,
+        query_embedding: Optional[List[float]] = None,
         search_strategy: SearchStrategy = SearchStrategy.VECTOR_ONLY,
         filter_threshold: float = 0,
         text_weight: float = 0.5,
@@ -687,6 +688,10 @@ class SingleStoreVectorStore(VectorStore):
                    - Logical: ``{"$and": [{...}, {...}]}``
 
                 Default is None.
+
+            query_embedding (List[float], optional): Pre-computed embedding for
+                the query.cIf not provided, the embedding will be computed using
+                the configured embedding function.
 
             search_strategy (SearchStrategy): The search strategy to use.
                 Default is SearchStrategy.VECTOR_ONLY.
@@ -818,6 +823,7 @@ class SingleStoreVectorStore(VectorStore):
             query=query,
             k=k,
             filter=filter,
+            query_embedding=query_embedding,
             search_strategy=search_strategy,
             filter_threshold=filter_threshold,
             text_weight=text_weight,
@@ -851,6 +857,7 @@ class SingleStoreVectorStore(VectorStore):
         query: str,
         k: int = 4,
         filter: Optional[Union[dict, FilterTypedDict]] = None,
+        query_embedding: Optional[List[float]] = None,
         search_strategy: SearchStrategy = SearchStrategy.VECTOR_ONLY,
         filter_threshold: float = 0,
         text_weight: float = 0.5,
@@ -881,6 +888,10 @@ class SingleStoreVectorStore(VectorStore):
                    - Logical: ``{"$and": [{...}, {...}]}``
 
                 Defaults to None.
+
+            query_embedding (List[float], optional): Pre-computed embedding for
+                the query. If not provided, the embedding will be computed using
+                the configured embedding function.
 
             search_strategy (SearchStrategy): The search strategy to use.
                 Default is SearchStrategy.VECTOR_ONLY.
@@ -988,10 +999,12 @@ class SingleStoreVectorStore(VectorStore):
                     host="username:password@localhost:3306/database",
                     use_full_text_search=True,
                     use_vector_index=True,
+                    vector_size=3,
                     full_text_index_version=FullTextIndexVersion.V2,
                 )
                 results = s2.similarity_search_with_score(
                         "query text", 1,
+                        query_embedding=[0.1, 0.2, 0.3], # Pre-computed embedding
                         search_strategy=SingleStoreVectorStore.SearchStrategy.FILTER_BY_VECTOR,
                         filter_threshold=0.5,
                         full_text_scoring_mode=FullTextScoringMode.BM25,
@@ -1051,7 +1064,10 @@ class SingleStoreVectorStore(VectorStore):
         # Creates embedding vector from user query
         embedding = []
         if search_strategy != SingleStoreVectorStore.SearchStrategy.TEXT_ONLY:
-            embedding = self.embedding.embed_query(query)
+            if query_embedding is not None:
+                embedding = query_embedding
+            else:
+                embedding = self.embedding.embed_query(query)
 
         conn = self.connection_pool.connect()
         result = []
@@ -1220,6 +1236,7 @@ class SingleStoreVectorStore(VectorStore):
         texts: List[str],
         embedding: Embeddings,
         metadatas: Optional[List[dict]] = None,
+        embeddings: Optional[List[List[float]]] = None,
         distance_strategy: DistanceStrategy = DEFAULT_DISTANCE_STRATEGY,
         table_name: str = "embeddings",
         content_field: str = "content",
@@ -1256,6 +1273,10 @@ class SingleStoreVectorStore(VectorStore):
 
             metadatas (Optional[List[dict]], optional): Optional list of metadatas.
                 Defaults to None.
+
+            embeddings (Optional[List[List[float]]], optional): Optional list of
+              pre-computed embeddings. If not provided, embeddings will be computed
+              using the provided embedding model.
 
             distance_strategy (DistanceStrategy, optional):
                 Determines the strategy employed for calculating
@@ -1417,7 +1438,12 @@ class SingleStoreVectorStore(VectorStore):
             full_text_index_version=full_text_index_version,
             **kwargs,
         )
-        instance.add_texts(texts, metadatas, embedding.embed_documents(texts), **kwargs)
+        instance.add_texts(
+            texts,
+            metadatas,
+            embedding.embed_documents(texts) if embeddings is None else embeddings,
+            **kwargs,
+        )
         return instance
 
     def get_by_ids(self, ids: Sequence[str], /) -> list[Document]:
