@@ -503,6 +503,7 @@ class SingleStoreVectorStore(VectorStore):
         self,
         uris: List[str],
         metadatas: Optional[List[dict]] = None,
+        *,
         embeddings: Optional[List[List[float]]] = None,
         **kwargs: Any,
     ) -> List[str]:
@@ -656,6 +657,7 @@ class SingleStoreVectorStore(VectorStore):
         query: str,
         k: int = 4,
         filter: Optional[Union[dict, FilterTypedDict]] = None,
+        *,
         query_embedding: Optional[List[float]] = None,
         search_strategy: SearchStrategy = SearchStrategy.VECTOR_ONLY,
         filter_threshold: float = 0,
@@ -857,6 +859,7 @@ class SingleStoreVectorStore(VectorStore):
         query: str,
         k: int = 4,
         filter: Optional[Union[dict, FilterTypedDict]] = None,
+        *,
         query_embedding: Optional[List[float]] = None,
         search_strategy: SearchStrategy = SearchStrategy.VECTOR_ONLY,
         filter_threshold: float = 0,
@@ -1065,6 +1068,10 @@ class SingleStoreVectorStore(VectorStore):
         embedding = []
         if search_strategy != SingleStoreVectorStore.SearchStrategy.TEXT_ONLY:
             if query_embedding is not None:
+                if self.use_vector_index and len(query_embedding) != self.vector_size:
+                    raise ValueError(
+                        "Query embedding size does not match vector size of the index"
+                    )
                 embedding = query_embedding
             else:
                 embedding = self.embedding.embed_query(query)
@@ -1236,6 +1243,7 @@ class SingleStoreVectorStore(VectorStore):
         texts: List[str],
         embedding: Embeddings,
         metadatas: Optional[List[dict]] = None,
+        *,
         embeddings: Optional[List[List[float]]] = None,
         distance_strategy: DistanceStrategy = DEFAULT_DISTANCE_STRATEGY,
         table_name: str = "embeddings",
@@ -1418,6 +1426,19 @@ class SingleStoreVectorStore(VectorStore):
                     host="username:password@localhost:3306/database"
                 )
         """
+
+        if embeddings is not None and len(embeddings) != len(texts):
+            raise ValueError("The number of embeddings must match the number of texts")
+
+        if (
+            use_vector_index
+            and embeddings is not None
+            and len(embeddings) > 0
+            and vector_size != len(embeddings[0])
+        ):
+            raise ValueError(
+                "Pre-computed embedding size does not match the specified vector_size"
+            )
 
         instance = cls(
             embedding,
