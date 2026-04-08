@@ -690,7 +690,7 @@ class SingleStoreVectorStore(VectorStore):
                 Default is None.
 
             query_embedding (List[float], optional): Pre-computed embedding for
-                the query.cIf not provided, the embedding will be computed using
+                the query. If not provided, the embedding will be computed using
                 the configured embedding function.
 
             search_strategy (SearchStrategy): The search strategy to use.
