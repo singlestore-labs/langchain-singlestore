@@ -9,7 +9,7 @@ class is used to ensure the embedding model is never called.
 import math
 import os
 import tempfile
-from typing import Generator, List
+from typing import Any, Generator, List
 
 import pytest
 from langchain_core.documents import Document
@@ -22,6 +22,70 @@ from langchain_singlestore._utils import (
 )
 from langchain_singlestore.vectorstores import SingleStoreVectorStore
 from tests.integration_tests.conftest import TEST_DB_NAME
+
+
+class StoreTracker:
+    """Tracks SingleStoreVectorStore instances for automatic cleanup.
+
+    Usage:
+        def test_something(self, store_tracker):
+            store = store_tracker.create(embedding=..., host=..., database=...)
+            # ... test code ...
+            # store.drop() is called automatically after the test
+    """
+
+    def __init__(self) -> None:
+        self._stores: List[SingleStoreVectorStore] = []
+
+    def track(self, store: SingleStoreVectorStore) -> SingleStoreVectorStore:
+        """Register a store for automatic cleanup."""
+        self._stores.append(store)
+        return store
+
+    def create(self, **kwargs: Any) -> SingleStoreVectorStore:
+        """Create and track a new SingleStoreVectorStore."""
+        store = SingleStoreVectorStore(**kwargs)
+        return self.track(store)
+
+    def create_from_texts(self, **kwargs: Any) -> SingleStoreVectorStore:
+        """Create from texts and track a new SingleStoreVectorStore."""
+        store = SingleStoreVectorStore.from_texts(**kwargs)
+        return self.track(store)
+
+    def create_from_documents(self, **kwargs: Any) -> SingleStoreVectorStore:
+        """Create from documents and track a new SingleStoreVectorStore."""
+        store = SingleStoreVectorStore.from_documents(**kwargs)
+        return self.track(store)
+
+    def cleanup(self) -> None:
+        """Drop all tracked stores."""
+        for store in self._stores:
+            try:
+                store.drop()
+            except Exception:
+                pass  # Ignore errors during cleanup
+        self._stores.clear()
+
+
+@pytest.fixture
+def store_tracker() -> Generator[StoreTracker, None, None]:
+    """Fixture that provides automatic cleanup for vectorstores.
+
+    Example:
+        def test_my_test(self, store_tracker, clean_db_url):
+            store = store_tracker.create(
+                embedding=ErrorEmbeddings(),
+                host=clean_db_url,
+                database=TEST_DB_NAME,
+            )
+            store.add_texts(...)  # use the store
+            # No need for try/finally - cleanup is automatic
+    """
+    tracker = StoreTracker()
+    try:
+        yield tracker
+    finally:
+        tracker.cleanup()
 
 
 class ErrorEmbeddings(Embeddings):
@@ -122,63 +186,59 @@ class TestPrecomputedEmbeddingsVectorStoreCreation:
 
     def test_constructor_add_texts_with_precomputed_embeddings(
         self,
+        store_tracker: StoreTracker,
         clean_db_url: str,
         sample_texts: List[str],
         sample_metadatas: List[dict],
         precomputed_embeddings: List[List[float]],
     ) -> None:
         """Test creating vectorstore with constructor and add_texts with embeddings."""
-        store = SingleStoreVectorStore(
+        store = store_tracker.create(
             embedding=ErrorEmbeddings(),
             host=clean_db_url,
             database=TEST_DB_NAME,
         )
-        try:
-            ids = store.add_texts(
-                texts=sample_texts,
-                metadatas=sample_metadatas,
-                embeddings=precomputed_embeddings,
-            )
-            assert len(ids) == len(sample_texts)
+        ids = store.add_texts(
+            texts=sample_texts,
+            metadatas=sample_metadatas,
+            embeddings=precomputed_embeddings,
+        )
+        assert len(ids) == len(sample_texts)
 
-            # Verify search works with pre-computed query embedding
-            results = store.similarity_search(
-                query="fox",
-                k=1,
-                query_embedding=precomputed_embeddings[0],
-            )
-            assert len(results) == 1
-            assert results[0].page_content == sample_texts[0]
-        finally:
-            store.drop()
+        # Verify search works with pre-computed query embedding
+        results = store.similarity_search(
+            query="fox",
+            k=1,
+            query_embedding=precomputed_embeddings[0],
+        )
+        assert len(results) == 1
+        assert results[0].page_content == sample_texts[0]
 
     def test_constructor_add_documents_with_precomputed_embeddings(
         self,
+        store_tracker: StoreTracker,
         clean_db_url: str,
         sample_documents: List[Document],
         precomputed_embeddings: List[List[float]],
     ) -> None:
         """Test vectorstore with constructor and add_documents with embeddings."""
-        store = SingleStoreVectorStore(
+        store = store_tracker.create(
             embedding=ErrorEmbeddings(),
             host=clean_db_url,
             database=TEST_DB_NAME,
         )
-        try:
-            ids = store.add_documents(
-                documents=sample_documents,
-                embeddings=precomputed_embeddings,
-            )
-            assert len(ids) == len(sample_documents)
+        ids = store.add_documents(
+            documents=sample_documents,
+            embeddings=precomputed_embeddings,
+        )
+        assert len(ids) == len(sample_documents)
 
-            results = store.similarity_search(
-                query="any",
-                k=3,
-                query_embedding=precomputed_embeddings[0],
-            )
-            assert len(results) == 3
-        finally:
-            store.drop()
+        results = store.similarity_search(
+            query="any",
+            k=3,
+            query_embedding=precomputed_embeddings[0],
+        )
+        assert len(results) == 3
 
     @pytest.mark.parametrize(
         "distance_strategy",
@@ -186,32 +246,30 @@ class TestPrecomputedEmbeddingsVectorStoreCreation:
     )
     def test_constructor_with_different_distance_strategies(
         self,
+        store_tracker: StoreTracker,
         clean_db_url: str,
         sample_texts: List[str],
         precomputed_embeddings: List[List[float]],
         distance_strategy: DistanceStrategy,
     ) -> None:
         """Test vectorstore creation with different distance strategies."""
-        store = SingleStoreVectorStore(
+        store = store_tracker.create(
             embedding=ErrorEmbeddings(),
             distance_strategy=distance_strategy,
             host=clean_db_url,
             database=TEST_DB_NAME,
         )
-        try:
-            store.add_texts(
-                texts=sample_texts,
-                embeddings=precomputed_embeddings,
-            )
-            results = store.similarity_search(
-                query="any",
-                k=1,
-                query_embedding=precomputed_embeddings[2],
-            )
-            assert len(results) == 1
-            assert results[0].page_content == sample_texts[2]
-        finally:
-            store.drop()
+        store.add_texts(
+            texts=sample_texts,
+            embeddings=precomputed_embeddings,
+        )
+        results = store.similarity_search(
+            query="any",
+            k=1,
+            query_embedding=precomputed_embeddings[2],
+        )
+        assert len(results) == 1
+        assert results[0].page_content == sample_texts[2]
 
     @pytest.mark.parametrize(
         "distance_strategy,vector_size,index_options",
@@ -227,6 +285,7 @@ class TestPrecomputedEmbeddingsVectorStoreCreation:
     )
     def test_constructor_with_vector_index(
         self,
+        store_tracker: StoreTracker,
         clean_db_url: str,
         sample_texts: List[str],
         distance_strategy: DistanceStrategy,
@@ -235,7 +294,7 @@ class TestPrecomputedEmbeddingsVectorStoreCreation:
     ) -> None:
         """Test vectorstore creation with vector index enabled."""
         embeddings = generate_embeddings(len(sample_texts), vector_size)
-        store = SingleStoreVectorStore(
+        store = store_tracker.create(
             embedding=ErrorEmbeddings(),
             distance_strategy=distance_strategy,
             use_vector_index=True,
@@ -244,17 +303,14 @@ class TestPrecomputedEmbeddingsVectorStoreCreation:
             host=clean_db_url,
             database=TEST_DB_NAME,
         )
-        try:
-            store.add_texts(texts=sample_texts, embeddings=embeddings)
-            results = store.similarity_search(
-                query="any",
-                k=1,
-                query_embedding=embeddings[2],
-            )
-            assert len(results) == 1
-            assert results[0].page_content == sample_texts[2]
-        finally:
-            store.drop()
+        store.add_texts(texts=sample_texts, embeddings=embeddings)
+        results = store.similarity_search(
+            query="any",
+            k=1,
+            query_embedding=embeddings[2],
+        )
+        assert len(results) == 1
+        assert results[0].page_content == sample_texts[2]
 
     @pytest.mark.parametrize(
         "full_text_index_version",
@@ -262,30 +318,28 @@ class TestPrecomputedEmbeddingsVectorStoreCreation:
     )
     def test_constructor_with_fulltext_index(
         self,
+        store_tracker: StoreTracker,
         clean_db_url: str,
         sample_texts: List[str],
         precomputed_embeddings: List[List[float]],
         full_text_index_version: FullTextIndexVersion,
     ) -> None:
         """Test vectorstore creation with fulltext index enabled."""
-        store = SingleStoreVectorStore(
+        store = store_tracker.create(
             embedding=ErrorEmbeddings(),
             use_full_text_search=True,
             full_text_index_version=full_text_index_version,
             host=clean_db_url,
             database=TEST_DB_NAME,
         )
-        try:
-            store.add_texts(texts=sample_texts, embeddings=precomputed_embeddings)
-            results = store.similarity_search(
-                query=sample_texts[1],
-                k=1,
-                search_strategy=SingleStoreVectorStore.SearchStrategy.TEXT_ONLY,
-            )
-            assert len(results) == 1
-            assert results[0].page_content == sample_texts[1]
-        finally:
-            store.drop()
+        store.add_texts(texts=sample_texts, embeddings=precomputed_embeddings)
+        results = store.similarity_search(
+            query=sample_texts[1],
+            k=1,
+            search_strategy=SingleStoreVectorStore.SearchStrategy.TEXT_ONLY,
+        )
+        assert len(results) == 1
+        assert results[0].page_content == sample_texts[1]
 
     # ============================================================
     # from_texts creation tests
@@ -293,13 +347,14 @@ class TestPrecomputedEmbeddingsVectorStoreCreation:
 
     def test_from_texts_with_precomputed_embeddings(
         self,
+        store_tracker: StoreTracker,
         clean_db_url: str,
         sample_texts: List[str],
         sample_metadatas: List[dict],
         precomputed_embeddings: List[List[float]],
     ) -> None:
         """Test from_texts with pre-computed embeddings."""
-        store = SingleStoreVectorStore.from_texts(
+        store = store_tracker.create_from_texts(
             texts=sample_texts,
             embedding=ErrorEmbeddings(),
             metadatas=sample_metadatas,
@@ -307,15 +362,12 @@ class TestPrecomputedEmbeddingsVectorStoreCreation:
             host=clean_db_url,
             database=TEST_DB_NAME,
         )
-        try:
-            results = store.similarity_search(
-                query="any",
-                k=3,
-                query_embedding=precomputed_embeddings[1],
-            )
-            assert len(results) == 3
-        finally:
-            store.drop()
+        results = store.similarity_search(
+            query="any",
+            k=3,
+            query_embedding=precomputed_embeddings[1],
+        )
+        assert len(results) == 3
 
     @pytest.mark.parametrize(
         "distance_strategy",
@@ -323,13 +375,14 @@ class TestPrecomputedEmbeddingsVectorStoreCreation:
     )
     def test_from_texts_with_different_distance_strategies(
         self,
+        store_tracker: StoreTracker,
         clean_db_url: str,
         sample_texts: List[str],
         precomputed_embeddings: List[List[float]],
         distance_strategy: DistanceStrategy,
     ) -> None:
         """Test from_texts with different distance strategies."""
-        store = SingleStoreVectorStore.from_texts(
+        store = store_tracker.create_from_texts(
             texts=sample_texts,
             embedding=ErrorEmbeddings(),
             embeddings=precomputed_embeddings,
@@ -337,16 +390,13 @@ class TestPrecomputedEmbeddingsVectorStoreCreation:
             host=clean_db_url,
             database=TEST_DB_NAME,
         )
-        try:
-            results = store.similarity_search(
-                query="any",
-                k=1,
-                query_embedding=precomputed_embeddings[0],
-            )
-            assert len(results) == 1
-            assert results[0].page_content == sample_texts[0]
-        finally:
-            store.drop()
+        results = store.similarity_search(
+            query="any",
+            k=1,
+            query_embedding=precomputed_embeddings[0],
+        )
+        assert len(results) == 1
+        assert results[0].page_content == sample_texts[0]
 
     @pytest.mark.parametrize(
         "distance_strategy,vector_size",
@@ -357,6 +407,7 @@ class TestPrecomputedEmbeddingsVectorStoreCreation:
     )
     def test_from_texts_with_vector_index(
         self,
+        store_tracker: StoreTracker,
         clean_db_url: str,
         sample_texts: List[str],
         distance_strategy: DistanceStrategy,
@@ -364,7 +415,7 @@ class TestPrecomputedEmbeddingsVectorStoreCreation:
     ) -> None:
         """Test from_texts with vector index enabled."""
         embeddings = generate_embeddings(len(sample_texts), vector_size)
-        store = SingleStoreVectorStore.from_texts(
+        store = store_tracker.create_from_texts(
             texts=sample_texts,
             embedding=ErrorEmbeddings(),
             embeddings=embeddings,
@@ -374,16 +425,13 @@ class TestPrecomputedEmbeddingsVectorStoreCreation:
             host=clean_db_url,
             database=TEST_DB_NAME,
         )
-        try:
-            results = store.similarity_search(
-                query="any",
-                k=1,
-                query_embedding=embeddings[2],
-            )
-            assert len(results) == 1
-            assert results[0].page_content == sample_texts[2]
-        finally:
-            store.drop()
+        results = store.similarity_search(
+            query="any",
+            k=1,
+            query_embedding=embeddings[2],
+        )
+        assert len(results) == 1
+        assert results[0].page_content == sample_texts[2]
 
     @pytest.mark.parametrize(
         "full_text_index_version",
@@ -391,13 +439,14 @@ class TestPrecomputedEmbeddingsVectorStoreCreation:
     )
     def test_from_texts_with_fulltext_index(
         self,
+        store_tracker: StoreTracker,
         clean_db_url: str,
         sample_texts: List[str],
         precomputed_embeddings: List[List[float]],
         full_text_index_version: FullTextIndexVersion,
     ) -> None:
         """Test from_texts with fulltext index enabled."""
-        store = SingleStoreVectorStore.from_texts(
+        store = store_tracker.create_from_texts(
             texts=sample_texts,
             embedding=ErrorEmbeddings(),
             embeddings=precomputed_embeddings,
@@ -406,16 +455,13 @@ class TestPrecomputedEmbeddingsVectorStoreCreation:
             host=clean_db_url,
             database=TEST_DB_NAME,
         )
-        try:
-            results = store.similarity_search(
-                query=sample_texts[1],
-                k=1,
-                search_strategy=SingleStoreVectorStore.SearchStrategy.TEXT_ONLY,
-            )
-            assert len(results) == 1
-            assert results[0].page_content == sample_texts[1]
-        finally:
-            store.drop()
+        results = store.similarity_search(
+            query=sample_texts[1],
+            k=1,
+            search_strategy=SingleStoreVectorStore.SearchStrategy.TEXT_ONLY,
+        )
+        assert len(results) == 1
+        assert results[0].page_content == sample_texts[1]
 
     # ============================================================
     # from_documents creation tests
@@ -423,27 +469,25 @@ class TestPrecomputedEmbeddingsVectorStoreCreation:
 
     def test_from_documents_with_precomputed_embeddings(
         self,
+        store_tracker: StoreTracker,
         clean_db_url: str,
         sample_documents: List[Document],
         precomputed_embeddings: List[List[float]],
     ) -> None:
         """Test from_documents with pre-computed embeddings."""
-        store = SingleStoreVectorStore.from_documents(
+        store = store_tracker.create_from_documents(
             documents=sample_documents,
             embedding=ErrorEmbeddings(),
             embeddings=precomputed_embeddings,
             host=clean_db_url,
             database=TEST_DB_NAME,
         )
-        try:
-            results = store.similarity_search(
-                query="any",
-                k=3,
-                query_embedding=precomputed_embeddings[0],
-            )
-            assert len(results) == 3
-        finally:
-            store.drop()
+        results = store.similarity_search(
+            query="any",
+            k=3,
+            query_embedding=precomputed_embeddings[0],
+        )
+        assert len(results) == 3
 
     @pytest.mark.parametrize(
         "distance_strategy",
@@ -451,13 +495,14 @@ class TestPrecomputedEmbeddingsVectorStoreCreation:
     )
     def test_from_documents_with_different_distance_strategies(
         self,
+        store_tracker: StoreTracker,
         clean_db_url: str,
         sample_documents: List[Document],
         precomputed_embeddings: List[List[float]],
         distance_strategy: DistanceStrategy,
     ) -> None:
         """Test from_documents with different distance strategies."""
-        store = SingleStoreVectorStore.from_documents(
+        store = store_tracker.create_from_documents(
             documents=sample_documents,
             embedding=ErrorEmbeddings(),
             embeddings=precomputed_embeddings,
@@ -465,16 +510,13 @@ class TestPrecomputedEmbeddingsVectorStoreCreation:
             host=clean_db_url,
             database=TEST_DB_NAME,
         )
-        try:
-            results = store.similarity_search(
-                query="any",
-                k=1,
-                query_embedding=precomputed_embeddings[0],
-            )
-            assert len(results) == 1
-            assert results[0].page_content == sample_documents[0].page_content
-        finally:
-            store.drop()
+        results = store.similarity_search(
+            query="any",
+            k=1,
+            query_embedding=precomputed_embeddings[0],
+        )
+        assert len(results) == 1
+        assert results[0].page_content == sample_documents[0].page_content
 
     @pytest.mark.parametrize(
         "distance_strategy,vector_size",
@@ -485,6 +527,7 @@ class TestPrecomputedEmbeddingsVectorStoreCreation:
     )
     def test_from_documents_with_vector_index(
         self,
+        store_tracker: StoreTracker,
         clean_db_url: str,
         sample_documents: List[Document],
         distance_strategy: DistanceStrategy,
@@ -492,7 +535,7 @@ class TestPrecomputedEmbeddingsVectorStoreCreation:
     ) -> None:
         """Test from_documents with vector index enabled."""
         embeddings = generate_embeddings(len(sample_documents), vector_size)
-        store = SingleStoreVectorStore.from_documents(
+        store = store_tracker.create_from_documents(
             documents=sample_documents,
             embedding=ErrorEmbeddings(),
             embeddings=embeddings,
@@ -502,16 +545,13 @@ class TestPrecomputedEmbeddingsVectorStoreCreation:
             host=clean_db_url,
             database=TEST_DB_NAME,
         )
-        try:
-            results = store.similarity_search(
-                query="any",
-                k=1,
-                query_embedding=embeddings[2],
-            )
-            assert len(results) == 1
-            assert results[0].page_content == sample_documents[2].page_content
-        finally:
-            store.drop()
+        results = store.similarity_search(
+            query="any",
+            k=1,
+            query_embedding=embeddings[2],
+        )
+        assert len(results) == 1
+        assert results[0].page_content == sample_documents[2].page_content
 
     @pytest.mark.parametrize(
         "full_text_index_version",
@@ -519,13 +559,14 @@ class TestPrecomputedEmbeddingsVectorStoreCreation:
     )
     def test_from_documents_with_fulltext_index(
         self,
+        store_tracker: StoreTracker,
         clean_db_url: str,
         sample_documents: List[Document],
         precomputed_embeddings: List[List[float]],
         full_text_index_version: FullTextIndexVersion,
     ) -> None:
         """Test from_documents with fulltext index enabled."""
-        store = SingleStoreVectorStore.from_documents(
+        store = store_tracker.create_from_documents(
             documents=sample_documents,
             embedding=ErrorEmbeddings(),
             embeddings=precomputed_embeddings,
@@ -534,16 +575,13 @@ class TestPrecomputedEmbeddingsVectorStoreCreation:
             host=clean_db_url,
             database=TEST_DB_NAME,
         )
-        try:
-            results = store.similarity_search(
-                query=sample_documents[1].page_content,
-                k=1,
-                search_strategy=SingleStoreVectorStore.SearchStrategy.TEXT_ONLY,
-            )
-            assert len(results) == 1
-            assert results[0].page_content == sample_documents[1].page_content
-        finally:
-            store.drop()
+        results = store.similarity_search(
+            query=sample_documents[1].page_content,
+            k=1,
+            search_strategy=SingleStoreVectorStore.SearchStrategy.TEXT_ONLY,
+        )
+        assert len(results) == 1
+        assert results[0].page_content == sample_documents[1].page_content
 
 
 class TestPrecomputedEmbeddingsAddImages:
@@ -567,66 +605,62 @@ class TestPrecomputedEmbeddingsAddImages:
 
     def test_add_images_with_precomputed_embeddings(
         self,
+        store_tracker: StoreTracker,
         clean_db_url: str,
         temp_image_files: List[str],
     ) -> None:
         """Test adding images with pre-computed embeddings."""
-        store = SingleStoreVectorStore(
+        store = store_tracker.create(
             embedding=ErrorEmbeddings(),
             host=clean_db_url,
             database=TEST_DB_NAME,
         )
-        try:
-            precomputed_embeddings = generate_embeddings(len(temp_image_files))
-            ids = store.add_images(
-                uris=temp_image_files,
-                embeddings=precomputed_embeddings,
-            )
-            assert len(ids) == len(temp_image_files)
+        precomputed_embeddings = generate_embeddings(len(temp_image_files))
+        ids = store.add_images(
+            uris=temp_image_files,
+            embeddings=precomputed_embeddings,
+        )
+        assert len(ids) == len(temp_image_files)
 
-            # Search using pre-computed query embedding
-            results = store.similarity_search(
-                query="image",
-                k=1,
-                query_embedding=precomputed_embeddings[0],
-            )
-            assert len(results) == 1
-            assert results[0].page_content == temp_image_files[0]
-        finally:
-            store.drop()
+        # Search using pre-computed query embedding
+        results = store.similarity_search(
+            query="image",
+            k=1,
+            query_embedding=precomputed_embeddings[0],
+        )
+        assert len(results) == 1
+        assert results[0].page_content == temp_image_files[0]
 
     def test_add_images_with_metadatas_and_precomputed_embeddings(
         self,
+        store_tracker: StoreTracker,
         clean_db_url: str,
         temp_image_files: List[str],
     ) -> None:
         """Test adding images with metadata and pre-computed embeddings."""
-        store = SingleStoreVectorStore(
+        store = store_tracker.create(
             embedding=ErrorEmbeddings(),
             host=clean_db_url,
             database=TEST_DB_NAME,
         )
-        try:
-            precomputed_embeddings = generate_embeddings(len(temp_image_files))
-            metadatas = [
-                {"index": i, "type": "image"} for i in range(len(temp_image_files))
-            ]
-            ids = store.add_images(
-                uris=temp_image_files,
-                metadatas=metadatas,
-                embeddings=precomputed_embeddings,
-            )
-            assert len(ids) == len(temp_image_files)
+        precomputed_embeddings = generate_embeddings(len(temp_image_files))
+        metadatas = [
+            {"index": i, "type": "image"} for i in range(len(temp_image_files))
+        ]
+        ids = store.add_images(
+            uris=temp_image_files,
+            metadatas=metadatas,
+            embeddings=precomputed_embeddings,
+        )
+        assert len(ids) == len(temp_image_files)
 
-            results = store.similarity_search(
-                query="image",
-                k=3,
-                query_embedding=precomputed_embeddings[1],
-                filter={"type": "image"},
-            )
-            assert len(results) == 3
-        finally:
-            store.drop()
+        results = store.similarity_search(
+            query="image",
+            k=3,
+            query_embedding=precomputed_embeddings[1],
+            filter={"type": "image"},
+        )
+        assert len(results) == 3
 
 
 class TestPrecomputedEmbeddingsSimilaritySearch:
@@ -677,97 +711,91 @@ class TestPrecomputedEmbeddingsSimilaritySearch:
 
     def test_similarity_search_vector_only(
         self,
+        store_tracker: StoreTracker,
         clean_db_url: str,
         snow_rain_texts: List[str],
         snow_rain_metadatas: List[dict],
         snow_rain_embeddings: List[List[float]],
     ) -> None:
         """Test VECTOR_ONLY search with pre-computed embeddings."""
-        store = SingleStoreVectorStore(
+        store = store_tracker.create(
             embedding=ErrorEmbeddings(),
             host=clean_db_url,
             database=TEST_DB_NAME,
         )
-        try:
-            store.add_texts(
-                texts=snow_rain_texts,
-                metadatas=snow_rain_metadatas,
-                embeddings=snow_rain_embeddings,
-            )
-            results = store.similarity_search(
-                query="rainstorm",
-                k=3,
-                query_embedding=snow_rain_embeddings[0],
-                search_strategy=SingleStoreVectorStore.SearchStrategy.VECTOR_ONLY,
-            )
-            assert len(results) == 3
-            # First result should be the most similar (index 0)
-            assert results[0].page_content == snow_rain_texts[0]
-        finally:
-            store.drop()
+        store.add_texts(
+            texts=snow_rain_texts,
+            metadatas=snow_rain_metadatas,
+            embeddings=snow_rain_embeddings,
+        )
+        results = store.similarity_search(
+            query="rainstorm",
+            k=3,
+            query_embedding=snow_rain_embeddings[0],
+            search_strategy=SingleStoreVectorStore.SearchStrategy.VECTOR_ONLY,
+        )
+        assert len(results) == 3
+        # First result should be the most similar (index 0)
+        assert results[0].page_content == snow_rain_texts[0]
 
     def test_similarity_search_vector_only_with_filter(
         self,
+        store_tracker: StoreTracker,
         clean_db_url: str,
         snow_rain_texts: List[str],
         snow_rain_metadatas: List[dict],
         snow_rain_embeddings: List[List[float]],
     ) -> None:
         """Test VECTOR_ONLY search with metadata filter."""
-        store = SingleStoreVectorStore(
+        store = store_tracker.create(
             embedding=ErrorEmbeddings(),
             host=clean_db_url,
             database=TEST_DB_NAME,
         )
-        try:
-            store.add_texts(
-                texts=snow_rain_texts,
-                metadatas=snow_rain_metadatas,
-                embeddings=snow_rain_embeddings,
-            )
-            results = store.similarity_search(
-                query="rainstorm",
-                k=3,
-                query_embedding=snow_rain_embeddings[0],
-                filter={"category": "snow"},
-            )
-            assert len(results) == 3
-            for doc in results:
-                assert doc.metadata["category"] == "snow"
-        finally:
-            store.drop()
+        store.add_texts(
+            texts=snow_rain_texts,
+            metadatas=snow_rain_metadatas,
+            embeddings=snow_rain_embeddings,
+        )
+        results = store.similarity_search(
+            query="rainstorm",
+            k=3,
+            query_embedding=snow_rain_embeddings[0],
+            filter={"category": "snow"},
+        )
+        assert len(results) == 3
+        for doc in results:
+            assert doc.metadata["category"] == "snow"
 
     def test_similarity_search_with_score_vector_only(
         self,
+        store_tracker: StoreTracker,
         clean_db_url: str,
         snow_rain_texts: List[str],
         snow_rain_metadatas: List[dict],
         snow_rain_embeddings: List[List[float]],
     ) -> None:
         """Test similarity_search_with_score with pre-computed embeddings."""
-        store = SingleStoreVectorStore(
+        store = store_tracker.create(
             embedding=ErrorEmbeddings(),
             host=clean_db_url,
             database=TEST_DB_NAME,
         )
-        try:
-            store.add_texts(
-                texts=snow_rain_texts,
-                metadatas=snow_rain_metadatas,
-                embeddings=snow_rain_embeddings,
-            )
-            results = store.similarity_search_with_score(
-                query="rainstorm",
-                k=3,
-                query_embedding=snow_rain_embeddings[0],
-            )
-            assert len(results) == 3
-            # Results should be tuples of (Document, score)
-            for doc, score in results:
-                assert isinstance(doc, Document)
-                assert isinstance(score, float)
-        finally:
-            store.drop()
+        store.add_texts(
+            texts=snow_rain_texts,
+            metadatas=snow_rain_metadatas,
+            embeddings=snow_rain_embeddings,
+        )
+        results = store.similarity_search_with_score(
+            query="rainstorm",
+            k=3,
+            query_embedding=snow_rain_embeddings[0],
+        )
+        assert len(results) == 3
+        # Results should be tuples of (Document, score)
+        for doc, score in results:
+            assert isinstance(doc, Document)
+            assert isinstance(score, float)
 
     # ============================================================
     # TEXT_ONLY search strategy tests
@@ -779,6 +807,7 @@ class TestPrecomputedEmbeddingsSimilaritySearch:
     )
     def test_similarity_search_text_only(
         self,
+        store_tracker: StoreTracker,
         clean_db_url: str,
         snow_rain_texts: List[str],
         snow_rain_metadatas: List[dict],
@@ -786,30 +815,27 @@ class TestPrecomputedEmbeddingsSimilaritySearch:
         full_text_index_version: FullTextIndexVersion,
     ) -> None:
         """Test TEXT_ONLY search (embedding not needed for search)."""
-        store = SingleStoreVectorStore(
+        store = store_tracker.create(
             embedding=ErrorEmbeddings(),
             use_full_text_search=True,
             full_text_index_version=full_text_index_version,
             host=clean_db_url,
             database=TEST_DB_NAME,
         )
-        try:
-            store.add_texts(
-                texts=snow_rain_texts,
-                metadatas=snow_rain_metadatas,
-                embeddings=snow_rain_embeddings,
-            )
-            # TEXT_ONLY doesn't need query_embedding
-            results = store.similarity_search(
-                query="rainstorm parched desert",
-                k=3,
-                search_strategy=SingleStoreVectorStore.SearchStrategy.TEXT_ONLY,
-            )
-            assert len(results) >= 1
-            # The first text mentions "parched desert" and "rainstorm"
-            assert "parched desert" in results[0].page_content
-        finally:
-            store.drop()
+        store.add_texts(
+            texts=snow_rain_texts,
+            metadatas=snow_rain_metadatas,
+            embeddings=snow_rain_embeddings,
+        )
+        # TEXT_ONLY doesn't need query_embedding
+        results = store.similarity_search(
+            query="rainstorm parched desert",
+            k=3,
+            search_strategy=SingleStoreVectorStore.SearchStrategy.TEXT_ONLY,
+        )
+        assert len(results) >= 1
+        # The first text mentions "parched desert" and "rainstorm"
+        assert "parched desert" in results[0].page_content
 
     @pytest.mark.parametrize(
         "full_text_scoring_mode",
@@ -821,6 +847,7 @@ class TestPrecomputedEmbeddingsSimilaritySearch:
     )
     def test_similarity_search_text_only_scoring_modes_v2(
         self,
+        store_tracker: StoreTracker,
         clean_db_url: str,
         snow_rain_texts: List[str],
         snow_rain_metadatas: List[dict],
@@ -828,33 +855,30 @@ class TestPrecomputedEmbeddingsSimilaritySearch:
         full_text_scoring_mode: FullTextScoringMode,
     ) -> None:
         """Test TEXT_ONLY search with different scoring modes (V2 index)."""
-        store = SingleStoreVectorStore(
+        store = store_tracker.create(
             embedding=ErrorEmbeddings(),
             use_full_text_search=True,
             full_text_index_version=FullTextIndexVersion.V2,
             host=clean_db_url,
             database=TEST_DB_NAME,
         )
-        try:
-            store.add_texts(
-                texts=snow_rain_texts,
-                metadatas=snow_rain_metadatas,
-                embeddings=snow_rain_embeddings,
-            )
-            results = store.similarity_search(
-                query="snowfall countryside",
-                k=1,
-                search_strategy=SingleStoreVectorStore.SearchStrategy.TEXT_ONLY,
-                full_text_scoring_mode=full_text_scoring_mode,
-            )
-            assert len(results) == 1
-            # Should find the document about snowfall in countryside
-            assert (
-                "countryside" in results[0].page_content
-                or "snow" in results[0].page_content
-            )
-        finally:
-            store.drop()
+        store.add_texts(
+            texts=snow_rain_texts,
+            metadatas=snow_rain_metadatas,
+            embeddings=snow_rain_embeddings,
+        )
+        results = store.similarity_search(
+            query="snowfall countryside",
+            k=1,
+            search_strategy=SingleStoreVectorStore.SearchStrategy.TEXT_ONLY,
+            full_text_scoring_mode=full_text_scoring_mode,
+        )
+        assert len(results) == 1
+        # Should find the document about snowfall in countryside
+        assert (
+            "countryside" in results[0].page_content
+            or "snow" in results[0].page_content
+        )
 
     # ============================================================
     # FILTER_BY_TEXT search strategy tests
@@ -866,6 +890,7 @@ class TestPrecomputedEmbeddingsSimilaritySearch:
     )
     def test_similarity_search_filter_by_text(
         self,
+        store_tracker: StoreTracker,
         clean_db_url: str,
         snow_rain_texts: List[str],
         snow_rain_metadatas: List[dict],
@@ -874,30 +899,28 @@ class TestPrecomputedEmbeddingsSimilaritySearch:
     ) -> None:
         """Test FILTER_BY_TEXT search with pre-computed embeddings."""
         threshold = 1 if full_text_index_version == FullTextIndexVersion.V2 else 0
-        store = SingleStoreVectorStore(
+        store = store_tracker.create(
             embedding=ErrorEmbeddings(),
             use_full_text_search=True,
             full_text_index_version=full_text_index_version,
             host=clean_db_url,
             database=TEST_DB_NAME,
         )
-        try:
-            store.add_texts(
-                texts=snow_rain_texts,
-                metadatas=snow_rain_metadatas,
-                embeddings=snow_rain_embeddings,
-            )
-            results = store.similarity_search(
-                query="rainstorm parched desert",
-                k=1,
-                query_embedding=snow_rain_embeddings[0],
-                search_strategy=SingleStoreVectorStore.SearchStrategy.FILTER_BY_TEXT,
-                filter_threshold=threshold,
-            )
-            assert len(results) == 1
-            assert "parched desert" in results[0].page_content
-        finally:
-            store.drop()
+
+        store.add_texts(
+            texts=snow_rain_texts,
+            metadatas=snow_rain_metadatas,
+            embeddings=snow_rain_embeddings,
+        )
+        results = store.similarity_search(
+            query="rainstorm parched desert",
+            k=1,
+            query_embedding=snow_rain_embeddings[0],
+            search_strategy=SingleStoreVectorStore.SearchStrategy.FILTER_BY_TEXT,
+            filter_threshold=threshold,
+        )
+        assert len(results) == 1
+        assert "parched desert" in results[0].page_content
 
     @pytest.mark.parametrize(
         "full_text_scoring_mode",
@@ -909,6 +932,7 @@ class TestPrecomputedEmbeddingsSimilaritySearch:
     )
     def test_similarity_search_filter_by_text_scoring_modes_v2(
         self,
+        store_tracker: StoreTracker,
         clean_db_url: str,
         snow_rain_texts: List[str],
         snow_rain_metadatas: List[dict],
@@ -916,30 +940,27 @@ class TestPrecomputedEmbeddingsSimilaritySearch:
         full_text_scoring_mode: FullTextScoringMode,
     ) -> None:
         """Test FILTER_BY_TEXT with different scoring modes (V2 index)."""
-        store = SingleStoreVectorStore(
+        store = store_tracker.create(
             embedding=ErrorEmbeddings(),
             use_full_text_search=True,
             full_text_index_version=FullTextIndexVersion.V2,
             host=clean_db_url,
             database=TEST_DB_NAME,
         )
-        try:
-            store.add_texts(
-                texts=snow_rain_texts,
-                metadatas=snow_rain_metadatas,
-                embeddings=snow_rain_embeddings,
-            )
-            results = store.similarity_search(
-                query="rainstorm parched desert",
-                k=1,
-                query_embedding=snow_rain_embeddings[0],
-                search_strategy=SingleStoreVectorStore.SearchStrategy.FILTER_BY_TEXT,
-                filter_threshold=0.2,
-                full_text_scoring_mode=full_text_scoring_mode,
-            )
-            assert len(results) == 1
-        finally:
-            store.drop()
+        store.add_texts(
+            texts=snow_rain_texts,
+            metadatas=snow_rain_metadatas,
+            embeddings=snow_rain_embeddings,
+        )
+        results = store.similarity_search(
+            query="rainstorm parched desert",
+            k=1,
+            query_embedding=snow_rain_embeddings[0],
+            search_strategy=SingleStoreVectorStore.SearchStrategy.FILTER_BY_TEXT,
+            filter_threshold=0.2,
+            full_text_scoring_mode=full_text_scoring_mode,
+        )
+        assert len(results) == 1
 
     # ============================================================
     # FILTER_BY_VECTOR search strategy tests
@@ -951,6 +972,7 @@ class TestPrecomputedEmbeddingsSimilaritySearch:
     )
     def test_similarity_search_filter_by_vector(
         self,
+        store_tracker: StoreTracker,
         clean_db_url: str,
         snow_rain_texts: List[str],
         snow_rain_metadatas: List[dict],
@@ -959,30 +981,28 @@ class TestPrecomputedEmbeddingsSimilaritySearch:
     ) -> None:
         """Test FILTER_BY_VECTOR search with pre-computed embeddings."""
         threshold = 0.2 if full_text_index_version == FullTextIndexVersion.V2 else -0.2
-        store = SingleStoreVectorStore(
+        store = store_tracker.create(
             embedding=ErrorEmbeddings(),
             use_full_text_search=True,
             full_text_index_version=full_text_index_version,
             host=clean_db_url,
             database=TEST_DB_NAME,
         )
-        try:
-            store.add_texts(
-                texts=snow_rain_texts,
-                metadatas=snow_rain_metadatas,
-                embeddings=snow_rain_embeddings,
-            )
-            results = store.similarity_search(
-                query="rainstorm desert rain",
-                k=1,
-                query_embedding=snow_rain_embeddings[0],
-                filter={"category": "rain"},
-                search_strategy=SingleStoreVectorStore.SearchStrategy.FILTER_BY_VECTOR,
-                filter_threshold=threshold,
-            )
-            assert len(results) >= 1
-        finally:
-            store.drop()
+
+        store.add_texts(
+            texts=snow_rain_texts,
+            metadatas=snow_rain_metadatas,
+            embeddings=snow_rain_embeddings,
+        )
+        results = store.similarity_search(
+            query="rainstorm desert rain",
+            k=1,
+            query_embedding=snow_rain_embeddings[0],
+            filter={"category": "rain"},
+            search_strategy=SingleStoreVectorStore.SearchStrategy.FILTER_BY_VECTOR,
+            filter_threshold=threshold,
+        )
+        assert len(results) >= 1
 
     @pytest.mark.parametrize(
         "full_text_scoring_mode",
@@ -994,6 +1014,7 @@ class TestPrecomputedEmbeddingsSimilaritySearch:
     )
     def test_similarity_search_filter_by_vector_scoring_modes_v2(
         self,
+        store_tracker: StoreTracker,
         clean_db_url: str,
         snow_rain_texts: List[str],
         snow_rain_metadatas: List[dict],
@@ -1001,30 +1022,28 @@ class TestPrecomputedEmbeddingsSimilaritySearch:
         full_text_scoring_mode: FullTextScoringMode,
     ) -> None:
         """Test FILTER_BY_VECTOR with different scoring modes (V2 index)."""
-        store = SingleStoreVectorStore(
+        store = store_tracker.create(
             embedding=ErrorEmbeddings(),
             use_full_text_search=True,
             full_text_index_version=FullTextIndexVersion.V2,
             host=clean_db_url,
             database=TEST_DB_NAME,
         )
-        try:
-            store.add_texts(
-                texts=snow_rain_texts,
-                metadatas=snow_rain_metadatas,
-                embeddings=snow_rain_embeddings,
-            )
-            results = store.similarity_search(
-                query="rainstorm desert rain",
-                k=1,
-                query_embedding=snow_rain_embeddings[0],
-                search_strategy=SingleStoreVectorStore.SearchStrategy.FILTER_BY_VECTOR,
-                filter_threshold=-10.0,
-                full_text_scoring_mode=full_text_scoring_mode,
-            )
-            assert len(results) == 1
-        finally:
-            store.drop()
+
+        store.add_texts(
+            texts=snow_rain_texts,
+            metadatas=snow_rain_metadatas,
+            embeddings=snow_rain_embeddings,
+        )
+        results = store.similarity_search(
+            query="rainstorm desert rain",
+            k=1,
+            query_embedding=snow_rain_embeddings[0],
+            search_strategy=SingleStoreVectorStore.SearchStrategy.FILTER_BY_VECTOR,
+            filter_threshold=-10.0,
+            full_text_scoring_mode=full_text_scoring_mode,
+        )
+        assert len(results) == 1
 
     # ============================================================
     # WEIGHTED_SUM search strategy tests
@@ -1036,6 +1055,7 @@ class TestPrecomputedEmbeddingsSimilaritySearch:
     )
     def test_similarity_search_weighted_sum(
         self,
+        store_tracker: StoreTracker,
         clean_db_url: str,
         snow_rain_texts: List[str],
         snow_rain_metadatas: List[dict],
@@ -1043,7 +1063,7 @@ class TestPrecomputedEmbeddingsSimilaritySearch:
         full_text_index_version: FullTextIndexVersion,
     ) -> None:
         """Test WEIGHTED_SUM search with pre-computed embeddings."""
-        store = SingleStoreVectorStore(
+        store = store_tracker.create(
             embedding=ErrorEmbeddings(),
             use_full_text_search=True,
             full_text_index_version=full_text_index_version,
@@ -1051,33 +1071,32 @@ class TestPrecomputedEmbeddingsSimilaritySearch:
             host=clean_db_url,
             database=TEST_DB_NAME,
         )
-        try:
-            store.add_texts(
-                texts=snow_rain_texts,
-                metadatas=snow_rain_metadatas,
-                embeddings=snow_rain_embeddings,
-            )
-            results = store.similarity_search(
-                query="rainstorm desert rain",
-                k=1,
-                query_embedding=snow_rain_embeddings[0],
-                search_strategy=SingleStoreVectorStore.SearchStrategy.WEIGHTED_SUM,
-                text_weight=0.3,
-                vector_weight=0.7,
-            )
-            assert len(results) == 1
-        finally:
-            store.drop()
+
+        store.add_texts(
+            texts=snow_rain_texts,
+            metadatas=snow_rain_metadatas,
+            embeddings=snow_rain_embeddings,
+        )
+        results = store.similarity_search(
+            query="rainstorm desert rain",
+            k=1,
+            query_embedding=snow_rain_embeddings[0],
+            search_strategy=SingleStoreVectorStore.SearchStrategy.WEIGHTED_SUM,
+            text_weight=0.3,
+            vector_weight=0.7,
+        )
+        assert len(results) == 1
 
     def test_similarity_search_weighted_sum_with_filter(
         self,
+        store_tracker: StoreTracker,
         clean_db_url: str,
         snow_rain_texts: List[str],
         snow_rain_metadatas: List[dict],
         snow_rain_embeddings: List[List[float]],
     ) -> None:
         """Test WEIGHTED_SUM search with metadata filter."""
-        store = SingleStoreVectorStore(
+        store = store_tracker.create(
             embedding=ErrorEmbeddings(),
             use_full_text_search=True,
             full_text_index_version=FullTextIndexVersion.V2,
@@ -1085,23 +1104,20 @@ class TestPrecomputedEmbeddingsSimilaritySearch:
             host=clean_db_url,
             database=TEST_DB_NAME,
         )
-        try:
-            store.add_texts(
-                texts=snow_rain_texts,
-                metadatas=snow_rain_metadatas,
-                embeddings=snow_rain_embeddings,
-            )
-            results = store.similarity_search(
-                query="rainstorm desert rain",
-                k=1,
-                query_embedding=snow_rain_embeddings[0],
-                filter={"category": "snow"},
-                search_strategy=SingleStoreVectorStore.SearchStrategy.WEIGHTED_SUM,
-            )
-            assert len(results) == 1
-            assert results[0].metadata["category"] == "snow"
-        finally:
-            store.drop()
+        store.add_texts(
+            texts=snow_rain_texts,
+            metadatas=snow_rain_metadatas,
+            embeddings=snow_rain_embeddings,
+        )
+        results = store.similarity_search(
+            query="rainstorm desert rain",
+            k=1,
+            query_embedding=snow_rain_embeddings[0],
+            filter={"category": "snow"},
+            search_strategy=SingleStoreVectorStore.SearchStrategy.WEIGHTED_SUM,
+        )
+        assert len(results) == 1
+        assert results[0].metadata["category"] == "snow"
 
     @pytest.mark.parametrize(
         "full_text_scoring_mode",
@@ -1113,6 +1129,7 @@ class TestPrecomputedEmbeddingsSimilaritySearch:
     )
     def test_similarity_search_weighted_sum_scoring_modes_v2(
         self,
+        store_tracker: StoreTracker,
         clean_db_url: str,
         snow_rain_texts: List[str],
         snow_rain_metadatas: List[dict],
@@ -1120,7 +1137,7 @@ class TestPrecomputedEmbeddingsSimilaritySearch:
         full_text_scoring_mode: FullTextScoringMode,
     ) -> None:
         """Test WEIGHTED_SUM with different scoring modes (V2 index)."""
-        store = SingleStoreVectorStore(
+        store = store_tracker.create(
             embedding=ErrorEmbeddings(),
             use_full_text_search=True,
             full_text_index_version=FullTextIndexVersion.V2,
@@ -1128,24 +1145,22 @@ class TestPrecomputedEmbeddingsSimilaritySearch:
             host=clean_db_url,
             database=TEST_DB_NAME,
         )
-        try:
-            store.add_texts(
-                texts=snow_rain_texts,
-                metadatas=snow_rain_metadatas,
-                embeddings=snow_rain_embeddings,
-            )
-            results = store.similarity_search(
-                query="snowfall countryside",
-                k=1,
-                query_embedding=snow_rain_embeddings[3],  # Use embedding for snow text
-                search_strategy=SingleStoreVectorStore.SearchStrategy.WEIGHTED_SUM,
-                text_weight=0.5,
-                vector_weight=0.5,
-                full_text_scoring_mode=full_text_scoring_mode,
-            )
-            assert len(results) == 1
-        finally:
-            store.drop()
+
+        store.add_texts(
+            texts=snow_rain_texts,
+            metadatas=snow_rain_metadatas,
+            embeddings=snow_rain_embeddings,
+        )
+        results = store.similarity_search(
+            query="snowfall countryside",
+            k=1,
+            query_embedding=snow_rain_embeddings[3],  # Use embedding for snow text
+            search_strategy=SingleStoreVectorStore.SearchStrategy.WEIGHTED_SUM,
+            text_weight=0.5,
+            vector_weight=0.5,
+            full_text_scoring_mode=full_text_scoring_mode,
+        )
+        assert len(results) == 1
 
     # ============================================================
     # Error case: WEIGHTED_SUM with EUCLIDEAN_DISTANCE
@@ -1153,32 +1168,30 @@ class TestPrecomputedEmbeddingsSimilaritySearch:
 
     def test_weighted_sum_unsupported_with_euclidean(
         self,
+        store_tracker: StoreTracker,
         clean_db_url: str,
         snow_rain_texts: List[str],
         snow_rain_embeddings: List[List[float]],
     ) -> None:
         """Test that WEIGHTED_SUM raises error with EUCLIDEAN_DISTANCE."""
-        store = SingleStoreVectorStore(
+        store = store_tracker.create(
             embedding=ErrorEmbeddings(),
             use_full_text_search=True,
             distance_strategy=DistanceStrategy.EUCLIDEAN_DISTANCE,
             host=clean_db_url,
             database=TEST_DB_NAME,
         )
-        try:
-            store.add_texts(texts=snow_rain_texts, embeddings=snow_rain_embeddings)
-            with pytest.raises(ValueError) as exc_info:
-                store.similarity_search(
-                    query="test",
-                    k=1,
-                    query_embedding=snow_rain_embeddings[0],
-                    search_strategy=SingleStoreVectorStore.SearchStrategy.WEIGHTED_SUM,
-                )
-            assert "Search strategy SearchStrategy.WEIGHTED_SUM is not" in str(
-                exc_info.value
+        store.add_texts(texts=snow_rain_texts, embeddings=snow_rain_embeddings)
+        with pytest.raises(ValueError) as exc_info:
+            store.similarity_search(
+                query="test",
+                k=1,
+                query_embedding=snow_rain_embeddings[0],
+                search_strategy=SingleStoreVectorStore.SearchStrategy.WEIGHTED_SUM,
             )
-        finally:
-            store.drop()
+        assert "Search strategy SearchStrategy.WEIGHTED_SUM is not" in str(
+            exc_info.value
+        )
 
 
 class TestPrecomputedEmbeddingsAdvancedFiltering:
@@ -1213,245 +1226,232 @@ class TestPrecomputedEmbeddingsAdvancedFiltering:
 
     def test_filter_eq_operator(
         self,
+        store_tracker: StoreTracker,
         clean_db_url: str,
         numeric_texts: List[str],
         numeric_metadatas: List[dict],
         numeric_embeddings: List[List[float]],
     ) -> None:
         """Test $eq operator with pre-computed embeddings."""
-        store = SingleStoreVectorStore(
+        store = store_tracker.create(
             embedding=ErrorEmbeddings(),
             host=clean_db_url,
             database=TEST_DB_NAME,
         )
-        try:
-            store.add_texts(
-                texts=numeric_texts,
-                metadatas=numeric_metadatas,
-                embeddings=numeric_embeddings,
-            )
-            results = store.similarity_search(
-                query="product",
-                k=10,
-                query_embedding=numeric_embeddings[0],
-                filter={"name": {"$eq": "B"}},
-            )
-            assert len(results) == 1
-            assert results[0].metadata["name"] == "B"
-        finally:
-            store.drop()
+        store.add_texts(
+            texts=numeric_texts,
+            metadatas=numeric_metadatas,
+            embeddings=numeric_embeddings,
+        )
+        results = store.similarity_search(
+            query="product",
+            k=10,
+            query_embedding=numeric_embeddings[0],
+            filter={"name": {"$eq": "B"}},
+        )
+        assert len(results) == 1
+        assert results[0].metadata["name"] == "B"
 
     def test_filter_gt_operator(
         self,
+        store_tracker: StoreTracker,
         clean_db_url: str,
         numeric_texts: List[str],
         numeric_metadatas: List[dict],
         numeric_embeddings: List[List[float]],
     ) -> None:
         """Test $gt operator with pre-computed embeddings."""
-        store = SingleStoreVectorStore(
+        store = store_tracker.create(
             embedding=ErrorEmbeddings(),
             host=clean_db_url,
             database=TEST_DB_NAME,
         )
-        try:
-            store.add_texts(
-                texts=numeric_texts,
-                metadatas=numeric_metadatas,
-                embeddings=numeric_embeddings,
-            )
-            results = store.similarity_search(
-                query="product",
-                k=10,
-                query_embedding=numeric_embeddings[0],
-                filter={"views": {"$gt": 150}},
-            )
-            assert len(results) == 2
-            names = [doc.metadata["name"] for doc in results]
-            assert "B" in names  # 200 views
-            assert "D" in names  # 300 views
-        finally:
-            store.drop()
+        store.add_texts(
+            texts=numeric_texts,
+            metadatas=numeric_metadatas,
+            embeddings=numeric_embeddings,
+        )
+        results = store.similarity_search(
+            query="product",
+            k=10,
+            query_embedding=numeric_embeddings[0],
+            filter={"views": {"$gt": 150}},
+        )
+        assert len(results) == 2
+        names = [doc.metadata["name"] for doc in results]
+        assert "B" in names  # 200 views
+        assert "D" in names  # 300 views
 
     def test_filter_in_operator(
         self,
+        store_tracker: StoreTracker,
         clean_db_url: str,
         numeric_texts: List[str],
         numeric_metadatas: List[dict],
         numeric_embeddings: List[List[float]],
     ) -> None:
         """Test $in operator with pre-computed embeddings."""
-        store = SingleStoreVectorStore(
+        store = store_tracker.create(
             embedding=ErrorEmbeddings(),
             host=clean_db_url,
             database=TEST_DB_NAME,
         )
-        try:
-            store.add_texts(
-                texts=numeric_texts,
-                metadatas=numeric_metadatas,
-                embeddings=numeric_embeddings,
-            )
-            results = store.similarity_search(
-                query="product",
-                k=10,
-                query_embedding=numeric_embeddings[0],
-                filter={"name": {"$in": ["A", "C"]}},
-            )
-            assert len(results) == 2
-            names = [doc.metadata["name"] for doc in results]
-            assert "A" in names
-            assert "C" in names
-        finally:
-            store.drop()
+
+        store.add_texts(
+            texts=numeric_texts,
+            metadatas=numeric_metadatas,
+            embeddings=numeric_embeddings,
+        )
+        results = store.similarity_search(
+            query="product",
+            k=10,
+            query_embedding=numeric_embeddings[0],
+            filter={"name": {"$in": ["A", "C"]}},
+        )
+        assert len(results) == 2
+        names = [doc.metadata["name"] for doc in results]
+        assert "A" in names
+        assert "C" in names
 
     def test_filter_and_operator(
         self,
+        store_tracker: StoreTracker,
         clean_db_url: str,
         numeric_texts: List[str],
         numeric_metadatas: List[dict],
         numeric_embeddings: List[List[float]],
     ) -> None:
         """Test $and operator with pre-computed embeddings."""
-        store = SingleStoreVectorStore(
+        store = store_tracker.create(
             embedding=ErrorEmbeddings(),
             host=clean_db_url,
             database=TEST_DB_NAME,
         )
-        try:
-            store.add_texts(
-                texts=numeric_texts,
-                metadatas=numeric_metadatas,
-                embeddings=numeric_embeddings,
-            )
-            results = store.similarity_search(
-                query="product",
-                k=10,
-                query_embedding=numeric_embeddings[0],
-                filter={
-                    "$and": [
-                        {"views": {"$gt": 100}},
-                        {"active": True},
-                    ]
-                },
-            )
-            # Products with views > 100 AND active=True: B (200), D (300)
-            assert len(results) == 2
-            names = [doc.metadata["name"] for doc in results]
-            assert "B" in names
-            assert "D" in names
-        finally:
-            store.drop()
+        store.add_texts(
+            texts=numeric_texts,
+            metadatas=numeric_metadatas,
+            embeddings=numeric_embeddings,
+        )
+        results = store.similarity_search(
+            query="product",
+            k=10,
+            query_embedding=numeric_embeddings[0],
+            filter={
+                "$and": [
+                    {"views": {"$gt": 100}},
+                    {"active": True},
+                ]
+            },
+        )
+        # Products with views > 100 AND active=True: B (200), D (300)
+        assert len(results) == 2
+        names = [doc.metadata["name"] for doc in results]
+        assert "B" in names
+        assert "D" in names
 
     def test_filter_or_operator(
         self,
+        store_tracker: StoreTracker,
         clean_db_url: str,
         numeric_texts: List[str],
         numeric_metadatas: List[dict],
         numeric_embeddings: List[List[float]],
     ) -> None:
         """Test $or operator with pre-computed embeddings."""
-        store = SingleStoreVectorStore(
+        store = store_tracker.create(
             embedding=ErrorEmbeddings(),
             host=clean_db_url,
             database=TEST_DB_NAME,
         )
-        try:
-            store.add_texts(
-                texts=numeric_texts,
-                metadatas=numeric_metadatas,
-                embeddings=numeric_embeddings,
-            )
-            results = store.similarity_search(
-                query="product",
-                k=10,
-                query_embedding=numeric_embeddings[0],
-                filter={
-                    "$or": [
-                        {"name": "A"},
-                        {"rating": {"$gte": 5.0}},
-                    ]
-                },
-            )
-            # name=A OR rating >= 5.0: A (4.5 but name matches), D (5.0)
-            assert len(results) >= 2
-            names = [doc.metadata["name"] for doc in results]
-            assert "A" in names
-            assert "D" in names
-        finally:
-            store.drop()
+        store.add_texts(
+            texts=numeric_texts,
+            metadatas=numeric_metadatas,
+            embeddings=numeric_embeddings,
+        )
+        results = store.similarity_search(
+            query="product",
+            k=10,
+            query_embedding=numeric_embeddings[0],
+            filter={
+                "$or": [
+                    {"name": "A"},
+                    {"rating": {"$gte": 5.0}},
+                ]
+            },
+        )
+        # name=A OR rating >= 5.0: A (4.5 but name matches), D (5.0)
+        assert len(results) >= 2
+        names = [doc.metadata["name"] for doc in results]
+        assert "A" in names
+        assert "D" in names
 
     def test_complex_nested_filter(
         self,
+        store_tracker: StoreTracker,
         clean_db_url: str,
         numeric_texts: List[str],
         numeric_metadatas: List[dict],
         numeric_embeddings: List[List[float]],
     ) -> None:
         """Test complex nested $and/$or filter with pre-computed embeddings."""
-        store = SingleStoreVectorStore(
+        store = store_tracker.create(
             embedding=ErrorEmbeddings(),
             host=clean_db_url,
             database=TEST_DB_NAME,
         )
-        try:
-            store.add_texts(
-                texts=numeric_texts,
-                metadatas=numeric_metadatas,
-                embeddings=numeric_embeddings,
-            )
-            results = store.similarity_search(
-                query="product",
-                k=10,
-                query_embedding=numeric_embeddings[0],
-                filter={
-                    "$and": [
-                        {
-                            "$or": [
-                                {"name": "A"},
-                                {"name": "B"},
-                            ]
-                        },
-                        {"views": {"$gte": 150}},
-                    ]
-                },
-            )
-            # (name=A OR name=B) AND views >= 150: B (200)
-            assert len(results) == 1
-            assert results[0].metadata["name"] == "B"
-        finally:
-            store.drop()
+        store.add_texts(
+            texts=numeric_texts,
+            metadatas=numeric_metadatas,
+            embeddings=numeric_embeddings,
+        )
+        results = store.similarity_search(
+            query="product",
+            k=10,
+            query_embedding=numeric_embeddings[0],
+            filter={
+                "$and": [
+                    {
+                        "$or": [
+                            {"name": "A"},
+                            {"name": "B"},
+                        ]
+                    },
+                    {"views": {"$gte": 150}},
+                ]
+            },
+        )
+        # (name=A OR name=B) AND views >= 150: B (200)
+        assert len(results) == 1
+        assert results[0].metadata["name"] == "B"
 
     def test_filter_with_search_strategy(
         self,
+        store_tracker: StoreTracker,
         clean_db_url: str,
         numeric_texts: List[str],
         numeric_metadatas: List[dict],
         numeric_embeddings: List[List[float]],
     ) -> None:
         """Test FilterTypedDict with TEXT_ONLY search and pre-computed embeddings."""
-        store = SingleStoreVectorStore(
+        store = store_tracker.create(
             embedding=ErrorEmbeddings(),
             use_full_text_search=True,
             full_text_index_version=FullTextIndexVersion.V2,
             host=clean_db_url,
             database=TEST_DB_NAME,
         )
-        try:
-            store.add_texts(
-                texts=numeric_texts,
-                metadatas=numeric_metadatas,
-                embeddings=numeric_embeddings,
-            )
-            # TEXT_ONLY doesn't need query_embedding
-            results = store.similarity_search(
-                query="product views",
-                k=10,
-                filter={"views": {"$gt": 100}},
-                search_strategy=SingleStoreVectorStore.SearchStrategy.TEXT_ONLY,
-            )
-            assert len(results) > 0
-            for doc in results:
-                assert doc.metadata["views"] > 100
-        finally:
-            store.drop()
+        store.add_texts(
+            texts=numeric_texts,
+            metadatas=numeric_metadatas,
+            embeddings=numeric_embeddings,
+        )
+        # TEXT_ONLY doesn't need query_embedding
+        results = store.similarity_search(
+            query="product views",
+            k=10,
+            filter={"views": {"$gt": 100}},
+            search_strategy=SingleStoreVectorStore.SearchStrategy.TEXT_ONLY,
+        )
+        assert len(results) > 0
+        for doc in results:
+            assert doc.metadata["views"] > 100

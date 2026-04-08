@@ -386,9 +386,9 @@ documents = [
     Document(page_content="The Colosseum is in Rome.", metadata={"city": "Rome"}),
 ]
 precomputed_embeddings = [
-    [0.1, 0.2, 0.3, ...],
-    [0.4, 0.5, 0.6, ...],
-    [0.7, 0.8, 0.9, ...],
+    [0.1, 0.2, 0.3, 0.4],
+    [0.4, 0.5, 0.6, 0.7],
+    [0.7, 0.8, 0.9, 1.0],
 ]
 
 # Add documents with pre-computed embeddings
@@ -407,9 +407,9 @@ image_uris = [
     "path/to/image3.jpg",
 ]
 precomputed_image_embeddings = [
-    [0.1, 0.2, 0.3, ...],  # embedding for image 1
-    [0.4, 0.5, 0.6, ...],  # embedding for image 2
-    [0.7, 0.8, 0.9, ...],  # embedding for image 3
+    [0.1, 0.2, 0.3, 0.4],  # embedding for image 1
+    [0.4, 0.5, 0.6, 0.7],  # embedding for image 2
+    [0.7, 0.8, 0.9, 1.0],  # embedding for image 3
 ]
 
 # Add images with pre-computed embeddings
@@ -423,7 +423,7 @@ ids = vector_store.add_images(
 
 ```python
 # Your pre-computed query embedding
-query_embedding = [0.15, 0.25, 0.35, ...]
+query_embedding = [0.15, 0.25, 0.35, 0.45]
 
 # Search using pre-computed query embedding (bypasses embed_query)
 results = vector_store.similarity_search(

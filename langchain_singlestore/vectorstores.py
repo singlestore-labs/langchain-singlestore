@@ -522,6 +522,19 @@ class SingleStoreVectorStore(VectorStore):
         Returns:
             List[str]: list of document ids added to the vectorstore
         """
+
+        if embeddings is not None and len(embeddings) != len(uris):
+            raise ValueError("Length of embeddings must match length of uris")
+
+        if (
+            embeddings is not None
+            and self.use_vector_index
+            and len(embeddings[0]) != self.vector_size
+        ):
+            raise ValueError(
+                "Pre-computed embedding size does not match the specified vector_size"
+            )
+
         # Set embeddings
         if (
             embeddings is None
