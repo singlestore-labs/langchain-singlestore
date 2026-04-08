@@ -503,6 +503,7 @@ class SingleStoreVectorStore(VectorStore):
         self,
         uris: List[str],
         metadatas: Optional[List[dict]] = None,
+        *,
         embeddings: Optional[List[List[float]]] = None,
         **kwargs: Any,
     ) -> List[str]:
@@ -520,7 +521,25 @@ class SingleStoreVectorStore(VectorStore):
 
         Returns:
             List[str]: list of document ids added to the vectorstore
+
+        Raises:
+            ValueError: If embeddings list length doesn't match uris length.
+            ValueError: If any embedding vector size doesn't match vector_size
+                when use_vector_index is True.
         """
+
+        if embeddings is not None and len(embeddings) != len(uris):
+            raise ValueError("Length of embeddings must match length of uris")
+
+        if embeddings is not None and len(embeddings) > 0 and self.use_vector_index:
+            if any(
+                len(embedding_vector) != self.vector_size
+                for embedding_vector in embeddings
+            ):
+                raise ValueError(
+                    "Pre-computed embedding size does not match the vector_size"
+                )
+
         # Set embeddings
         if (
             embeddings is None
@@ -551,7 +570,14 @@ class SingleStoreVectorStore(VectorStore):
 
         Returns:
             List[str]: list of document ids added to the vectorstore
+
+        Raises:
+            ValueError: If embeddings list length doesn't match texts count,
+                or if embedding vector size doesn't match vector_size when using
+                vector index.
         """
+
+        text_count = 0
         result_ids: List[str] = []
         conn = self.connection_pool.connect()
         try:
@@ -559,13 +585,24 @@ class SingleStoreVectorStore(VectorStore):
             try:
                 # Write data to singlestore db
                 for i, text in enumerate(texts):
+                    text_count += 1
                     # Use provided values by default or fallback
                     metadata = metadatas[i] if metadatas else {}
+                    if embeddings is not None and len(embeddings) <= i:
+                        raise ValueError(
+                            "The number of embeddings must match the number of texts"
+                        )
                     embedding = (
                         embeddings[i]
                         if embeddings
                         else self.embedding.embed_documents([text])[0]
                     )
+                    if self.use_vector_index and (
+                        not embedding or len(embedding) != self.vector_size
+                    ):
+                        raise ValueError(
+                            "Embedding size does not match the vector_size"
+                        )
                     if not ids or len(ids) <= i:
                         cur.execute(
                             """INSERT INTO {}({}, {}, {})
@@ -615,6 +652,10 @@ class SingleStoreVectorStore(VectorStore):
                         result_ids.append(ids[i])
                 if self.use_vector_index or self.use_full_text_search:
                     cur.execute("OPTIMIZE TABLE {} FLUSH;".format(self.table_name))
+                if embeddings is not None and len(embeddings) != text_count:
+                    raise ValueError(
+                        "The number of embeddings must match the number of texts"
+                    )
             finally:
                 cur.close()
         finally:
@@ -656,6 +697,8 @@ class SingleStoreVectorStore(VectorStore):
         query: str,
         k: int = 4,
         filter: Optional[Union[dict, FilterTypedDict]] = None,
+        *,
+        query_embedding: Optional[List[float]] = None,
         search_strategy: SearchStrategy = SearchStrategy.VECTOR_ONLY,
         filter_threshold: float = 0,
         text_weight: float = 0.5,
@@ -687,6 +730,10 @@ class SingleStoreVectorStore(VectorStore):
                    - Logical: ``{"$and": [{...}, {...}]}``
 
                 Default is None.
+
+            query_embedding (List[float], optional): Pre-computed embedding for
+                the query. If not provided, the embedding will be computed using
+                the configured embedding function.
 
             search_strategy (SearchStrategy): The search strategy to use.
                 Default is SearchStrategy.VECTOR_ONLY.
@@ -756,6 +803,16 @@ class SingleStoreVectorStore(VectorStore):
         Returns:
             List[Document]: A list of documents that are most similar to the query text.
 
+        Raises:
+            ValueError: If search_strategy is not VECTOR_ONLY and
+                use_full_text_search is False.
+            ValueError: If search_strategy is WEIGHTED_SUM and distance_strategy
+                is not DOT_PRODUCT.
+            ValueError: If full_text_scoring_mode is BM25 or BM25_GLOBAL and
+                full_text_index_version is not V2.
+            ValueError: If query_embedding is provided and its size doesn't match
+                vector_size when use_vector_index is True.
+
         Examples:
 
             Basic Usage:
@@ -818,6 +875,7 @@ class SingleStoreVectorStore(VectorStore):
             query=query,
             k=k,
             filter=filter,
+            query_embedding=query_embedding,
             search_strategy=search_strategy,
             filter_threshold=filter_threshold,
             text_weight=text_weight,
@@ -851,6 +909,8 @@ class SingleStoreVectorStore(VectorStore):
         query: str,
         k: int = 4,
         filter: Optional[Union[dict, FilterTypedDict]] = None,
+        *,
+        query_embedding: Optional[List[float]] = None,
         search_strategy: SearchStrategy = SearchStrategy.VECTOR_ONLY,
         filter_threshold: float = 0,
         text_weight: float = 0.5,
@@ -881,6 +941,10 @@ class SingleStoreVectorStore(VectorStore):
                    - Logical: ``{"$and": [{...}, {...}]}``
 
                 Defaults to None.
+
+            query_embedding (List[float], optional): Pre-computed embedding for
+                the query. If not provided, the embedding will be computed using
+                the configured embedding function.
 
             search_strategy (SearchStrategy): The search strategy to use.
                 Default is SearchStrategy.VECTOR_ONLY.
@@ -953,8 +1017,14 @@ class SingleStoreVectorStore(VectorStore):
             document.
 
         Raises:
-            ValueError: If the search strategy is not supported with the
-                distance strategy.
+            ValueError: If search_strategy is not VECTOR_ONLY and
+                use_full_text_search is False.
+            ValueError: If search_strategy is WEIGHTED_SUM and distance_strategy
+                is not DOT_PRODUCT.
+            ValueError: If full_text_scoring_mode is BM25 or BM25_GLOBAL and
+                full_text_index_version is not V2.
+            ValueError: If query_embedding is provided and its size doesn't match
+                vector_size when use_vector_index is True.
 
         Examples:
             Basic Usage:
@@ -988,10 +1058,12 @@ class SingleStoreVectorStore(VectorStore):
                     host="username:password@localhost:3306/database",
                     use_full_text_search=True,
                     use_vector_index=True,
+                    vector_size=3,
                     full_text_index_version=FullTextIndexVersion.V2,
                 )
                 results = s2.similarity_search_with_score(
                         "query text", 1,
+                        query_embedding=[0.1, 0.2, 0.3], # Pre-computed embedding
                         search_strategy=SingleStoreVectorStore.SearchStrategy.FILTER_BY_VECTOR,
                         filter_threshold=0.5,
                         full_text_scoring_mode=FullTextScoringMode.BM25,
@@ -1051,7 +1123,14 @@ class SingleStoreVectorStore(VectorStore):
         # Creates embedding vector from user query
         embedding = []
         if search_strategy != SingleStoreVectorStore.SearchStrategy.TEXT_ONLY:
-            embedding = self.embedding.embed_query(query)
+            if query_embedding is not None:
+                if self.use_vector_index and len(query_embedding) != self.vector_size:
+                    raise ValueError(
+                        "Query embedding size does not match vector size of the index"
+                    )
+                embedding = query_embedding
+            else:
+                embedding = self.embedding.embed_query(query)
 
         conn = self.connection_pool.connect()
         result = []
@@ -1220,6 +1299,8 @@ class SingleStoreVectorStore(VectorStore):
         texts: List[str],
         embedding: Embeddings,
         metadatas: Optional[List[dict]] = None,
+        *,
+        embeddings: Optional[List[List[float]]] = None,
         distance_strategy: DistanceStrategy = DEFAULT_DISTANCE_STRATEGY,
         table_name: str = "embeddings",
         content_field: str = "content",
@@ -1256,6 +1337,10 @@ class SingleStoreVectorStore(VectorStore):
 
             metadatas (Optional[List[dict]], optional): Optional list of metadatas.
                 Defaults to None.
+
+            embeddings (Optional[List[List[float]]], optional): Optional list of
+              pre-computed embeddings. If not provided, embeddings will be computed
+              using the provided embedding model.
 
             distance_strategy (DistanceStrategy, optional):
                 Determines the strategy employed for calculating
@@ -1385,6 +1470,14 @@ class SingleStoreVectorStore(VectorStore):
             results_format (str, optional): Deprecated. This option has been renamed to
                 results_type.
 
+        Returns:
+            SingleStoreVectorStore: A new vectorstore instance with the texts added.
+
+        Raises:
+            ValueError: If embeddings list length doesn't match texts length.
+            ValueError: If any embedding vector size doesn't match vector_size
+                when use_vector_index is True.
+
         Example:
             .. code-block:: python
 
@@ -1397,6 +1490,17 @@ class SingleStoreVectorStore(VectorStore):
                     host="username:password@localhost:3306/database"
                 )
         """
+
+        if embeddings is not None and len(embeddings) != len(texts):
+            raise ValueError("The number of embeddings must match the number of texts")
+
+        if use_vector_index and embeddings is not None and len(embeddings) > 0:
+            if any(
+                len(embedding_vector) != vector_size for embedding_vector in embeddings
+            ):
+                raise ValueError(
+                    "All pre-computed embeddings must match the specified vector_size"
+                )
 
         instance = cls(
             embedding,
@@ -1417,7 +1521,12 @@ class SingleStoreVectorStore(VectorStore):
             full_text_index_version=full_text_index_version,
             **kwargs,
         )
-        instance.add_texts(texts, metadatas, embedding.embed_documents(texts), **kwargs)
+        instance.add_texts(
+            texts,
+            metadatas,
+            embedding.embed_documents(texts) if embeddings is None else embeddings,
+            **kwargs,
+        )
         return instance
 
     def get_by_ids(self, ids: Sequence[str], /) -> list[Document]:
