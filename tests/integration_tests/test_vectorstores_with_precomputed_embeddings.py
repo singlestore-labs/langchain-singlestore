@@ -7,6 +7,7 @@ class is used to ensure the embedding model is never called.
 """
 
 import math
+import os
 import tempfile
 from typing import Generator, List
 
@@ -558,7 +559,11 @@ class TestPrecomputedEmbeddingsAddImages:
             temp_file.close()
             temp_files.append(temp_file.name)
         yield temp_files
-        # Cleanup is handled by tempfile
+        for file in temp_files:
+            try:
+                os.remove(file)
+            except Exception:
+                pass
 
     def test_add_images_with_precomputed_embeddings(
         self,
