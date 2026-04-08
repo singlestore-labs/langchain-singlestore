@@ -528,6 +528,7 @@ class SingleStoreVectorStore(VectorStore):
 
         if (
             embeddings is not None
+            and len(embeddings) > 0
             and self.use_vector_index
             and len(embeddings[0]) != self.vector_size
         ):
