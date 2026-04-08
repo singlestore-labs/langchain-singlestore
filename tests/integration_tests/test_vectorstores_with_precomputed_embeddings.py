@@ -60,10 +60,7 @@ class StoreTracker:
     def cleanup(self) -> None:
         """Drop all tracked stores."""
         for store in self._stores:
-            try:
-                store.drop()
-            except Exception:
-                pass  # Ignore errors during cleanup
+            store.drop()
         self._stores.clear()
 
 
