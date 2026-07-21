@@ -63,6 +63,7 @@ langchain-tests = ">=1.0.0,<2.0.0"
 langchain-experimental = "^0.4.1"
 open-clip-torch = "^2.32.0"
 torch = "^2.6.0"
+torchvision = {version = "^0.28.0", python = ">=3.10,!=3.14.1,<4.0"}
 
 [tool.poetry.group.codespell.dependencies]
 codespell = "^2.2.6"
