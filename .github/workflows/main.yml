@@ -1,4 +1,4 @@
-name: Lint and Integration Tests
+name: Lint and Tests
 
 on:
   push:
@@ -8,9 +8,18 @@ on:
   workflow_dispatch:
 
 jobs:
-  lint-and-tests:
+  lint-and-unit-tests:
     runs-on: ubuntu-latest
-
+    strategy:
+      fail-fast: false
+      matrix:
+        package:
+          - singlestore-langchain-core
+          - langchain-singlestore
+          - langgraph-singlestore
+    defaults:
+      run:
+        working-directory: libs/${{ matrix.package }}
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
@@ -31,13 +40,41 @@ jobs:
           poetry config virtualenvs.in-project true
 
       - name: Install dependencies
-        run: poetry install --with lint,typing,test,test_integration
+        run: poetry install --with lint,typing,test
 
       - name: Run linter
         run: make lint
 
       - name: Run unit tests
-        run: make tests
+        run: make test
+
+  integration-tests:
+    # Only langchain-singlestore has a docker-driven integration suite today.
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: libs/langchain-singlestore
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Install Poetry
+        run: |
+          curl -sSL https://install.python-poetry.org | python3 -
+          echo "$HOME/.local/bin" >> $GITHUB_PATH
+
+      - name: Configure Poetry
+        run: |
+          poetry config virtualenvs.create true
+          poetry config virtualenvs.in-project true
+
+      - name: Install dependencies
+        run: poetry install --with lint,typing,test,test_image,test_integration
 
       - name: Run integration tests
         run: make ci_tests

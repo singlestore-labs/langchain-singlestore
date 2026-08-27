@@ -10,12 +10,13 @@ authors = []
 readme = "README.md"
 repository = "https://github.com/singlestore-labs/langchain-singlestore"
 license = "MIT"
+packages = [{ include = "langchain_singlestore" }]
 
 [tool.mypy]
 disallow_untyped_defs = "True"
 
 [tool.poetry.urls]
-"Source Code" = "https://github.com/singlestore-labs/langchain-singlestore/tree/main/langchain_singlestore"
+"Source Code" = "https://github.com/singlestore-labs/langchain-singlestore/tree/main/libs/langchain-singlestore"
 "Release Notes" = "https://github.com/singlestore-labs/langchain-singlestore/releases"
 
 [tool.poetry.dependencies]
@@ -23,6 +24,9 @@ python = ">=3.10,<4.0"
 langchain-core = ">=1.2.5,<2.0.0"
 singlestoredb = "^1.16.9"
 sqlalchemy = "^2.0.40"
+# Path dep for in-tree development; publish workflow rewrites this to a
+# version constraint (e.g. singlestore-langchain-core = "^0.1.0").
+singlestore-langchain-core = { path = "../singlestore-langchain-core", develop = true }
 
 [tool.ruff.lint]
 select = ["E", "F", "I", "T201"]
@@ -38,6 +42,9 @@ markers = [
 asyncio_mode = "auto"
 
 [tool.poetry.group.test]
+optional = true
+
+[tool.poetry.group.test_image]
 optional = true
 
 [tool.poetry.group.codespell]
@@ -61,6 +68,10 @@ pytest-socket = "^0.7.0"
 pytest-watcher = "^0.3.4"
 langchain-tests = ">=1.0.0,<2.0.0"
 langchain-experimental = "^0.4.1"
+
+# Heavy dependencies only required by the image-embedding integration tests.
+# Install with `poetry install --with test,test_image` when running those.
+[tool.poetry.group.test_image.dependencies]
 open-clip-torch = "^2.32.0"
 torch = "^2.6.0"
 torchvision = {version = "^0.28.0", python = ">=3.10,!=3.14.1,<4.0"}

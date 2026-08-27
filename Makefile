@@ -1,68 +1,63 @@
-.PHONY: all format lint test tests integration_tests docker_tests help extended_tests
+.PHONY: all help \
+	fmt-core fmt-langchain fmt-langgraph fmt \
+	lint-core lint-langchain lint-langgraph lint \
+	test-core test-langchain test-langgraph test tests \
+	integration-langchain integration_tests \
+	install
 
-# Default target executed when no arguments are given to make.
+CORE_DIR := libs/singlestore-langchain-core
+LANGCHAIN_DIR := libs/langchain-singlestore
+LANGGRAPH_DIR := libs/langgraph-singlestore
+PACKAGES := $(CORE_DIR) $(LANGCHAIN_DIR) $(LANGGRAPH_DIR)
+
 all: help
 
-# Define a variable for the test file path.
-TEST_FILE ?= tests/unit_tests/
-integration_test integration_tests ci_tests: TEST_FILE = tests/integration_tests/
+# ---------- install ----------
+install:
+	@for pkg in $(PACKAGES); do \
+		echo "== poetry install ($$pkg) =="; \
+		( cd $$pkg && poetry install --with lint,typing,test ) || exit $$?; \
+	done
 
+# ---------- formatting ----------
+fmt: fmt-core fmt-langchain fmt-langgraph
+fmt-core:
+	$(MAKE) -C $(CORE_DIR) format
+fmt-langchain:
+	$(MAKE) -C $(LANGCHAIN_DIR) format
+fmt-langgraph:
+	$(MAKE) -C $(LANGGRAPH_DIR) format
 
-# unit tests are run with the --disable-socket flag to prevent network calls
-test tests:
-	poetry run pytest --disable-socket --allow-unix-socket $(TEST_FILE)
+# ---------- linting ----------
+lint: lint-core lint-langchain lint-langgraph
+lint-core:
+	$(MAKE) -C $(CORE_DIR) lint
+lint-langchain:
+	$(MAKE) -C $(LANGCHAIN_DIR) lint
+lint-langgraph:
+	$(MAKE) -C $(LANGGRAPH_DIR) lint
 
-test_watch:
-	poetry run ptw --snapshot-update --now . -- -vv $(TEST_FILE)
+# ---------- unit tests ----------
+test tests: test-core test-langchain test-langgraph
+test-core:
+	$(MAKE) -C $(CORE_DIR) test
+test-langchain:
+	$(MAKE) -C $(LANGCHAIN_DIR) test
+test-langgraph:
+	$(MAKE) -C $(LANGGRAPH_DIR) test
 
-# integration tests are run without the --disable-socket flag to allow network calls
-integration_test integration_tests:
-	poetry run pytest $(TEST_FILE)
-
-# CI should not run the test_add_image2 test, as it downloads a lot of data nd takes lots of time
-ci_tests:
-	poetry run pytest $(TEST_FILE) -k "not test_add_image2"
-
-######################
-# LINTING AND FORMATTING
-######################
-
-# Define a variable for Python and notebook files.
-PYTHON_FILES=.
-MYPY_CACHE=.mypy_cache
-lint format: PYTHON_FILES=.
-lint_diff format_diff: PYTHON_FILES=$(shell git diff --relative=libs/partners/singlestore --name-only --diff-filter=d master | grep -E '\.py$$|\.ipynb$$')
-lint_package: PYTHON_FILES=langchain_singlestore
-lint_tests: PYTHON_FILES=tests
-lint_tests: MYPY_CACHE=.mypy_cache_test
-
-lint lint_diff lint_package lint_tests:
-	[ "$(PYTHON_FILES)" = "" ] || poetry run ruff check $(PYTHON_FILES)
-	[ "$(PYTHON_FILES)" = "" ] || poetry run ruff format $(PYTHON_FILES) --diff
-	[ "$(PYTHON_FILES)" = "" ] || mkdir -p $(MYPY_CACHE) && poetry run mypy $(PYTHON_FILES) --cache-dir $(MYPY_CACHE)
-
-format format_diff:
-	[ "$(PYTHON_FILES)" = "" ] || poetry run ruff format $(PYTHON_FILES)
-	[ "$(PYTHON_FILES)" = "" ] || poetry run ruff check --select I --fix $(PYTHON_FILES)
-
-spell_check:
-	poetry run codespell --toml pyproject.toml
-
-spell_fix:
-	poetry run codespell --toml pyproject.toml -w
-
-check_imports: $(shell find langchain_singlestore -name '*.py')
-	poetry run python ./scripts/check_imports.py $^
-
-######################
-# HELP
-######################
+# ---------- integration tests ----------
+integration_tests: integration-langchain
+integration-langchain:
+	$(MAKE) -C $(LANGCHAIN_DIR) integration_tests
 
 help:
-	@echo '----'
-	@echo 'check_imports				- check imports'
-	@echo 'format                       - run code formatters'
-	@echo 'lint                         - run linters'
-	@echo 'test                         - run unit tests'
-	@echo 'tests                        - run unit tests'
-	@echo 'test TEST_FILE=<test_file>   - run all tests in file'
+	@echo 'Monorepo targets:'
+	@echo '  install               - poetry install every package under libs/'
+	@echo '  fmt                   - format every package'
+	@echo '  lint                  - lint every package'
+	@echo '  test                  - run unit tests for every package'
+	@echo '  integration_tests     - run integration tests (langchain-singlestore)'
+	@echo ''
+	@echo 'Per-package targets: fmt-{core,langchain,langgraph}, lint-{...}, test-{...}'
+	@echo 'Or cd libs/<pkg> and use its own Makefile directly.'

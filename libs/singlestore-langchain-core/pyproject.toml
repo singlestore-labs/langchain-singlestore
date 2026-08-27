@@ -1,0 +1,52 @@
+[build-system]
+requires = ["poetry-core>=1.0.0"]
+build-backend = "poetry.core.masonry.api"
+
+[tool.poetry]
+name = "singlestore-langchain-core"
+version = "0.1.0"
+description = "Shared SingleStore helpers for langchain-singlestore and langgraph-singlestore"
+authors = []
+readme = "README.md"
+repository = "https://github.com/singlestore-labs/langchain-singlestore"
+license = "MIT"
+packages = [{ include = "singlestore_langchain_core" }]
+
+[tool.poetry.urls]
+"Source Code" = "https://github.com/singlestore-labs/langchain-singlestore/tree/main/libs/singlestore-langchain-core"
+"Release Notes" = "https://github.com/singlestore-labs/langchain-singlestore/releases"
+
+[tool.poetry.dependencies]
+python = ">=3.10,<4.0"
+singlestoredb = "^1.16.9"
+sqlalchemy = "^2.0.40"
+
+[tool.mypy]
+disallow_untyped_defs = "True"
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "T201"]
+
+[tool.pytest.ini_options]
+addopts = "--strict-markers --strict-config --durations=5"
+asyncio_mode = "auto"
+
+[tool.poetry.group.test]
+optional = true
+
+[tool.poetry.group.lint]
+optional = true
+
+[tool.poetry.group.typing]
+optional = true
+
+[tool.poetry.group.test.dependencies]
+pytest = ">=7.4.3,<10.0.0"
+pytest-asyncio = ">=0.23.2,<2.0.0"
+pytest-socket = "^0.7.0"
+
+[tool.poetry.group.lint.dependencies]
+ruff = "^0.5"
+
+[tool.poetry.group.typing.dependencies]
+mypy = "^1.10"
