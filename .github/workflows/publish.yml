@@ -1,9 +1,18 @@
 name: Publish
 
+# Tags now embed the package name so we can release each library on its own
+# cadence:
+#
+#   langchain-singlestore-v1.5.1
+#   singlestore-langchain-core-v0.1.0
+#   langgraph-singlestore-v0.0.2
+#
 on:
   push:
     tags:
-      - "v*.*.*"  # Triggers on version tags like v1.2.3
+      - "singlestore-langchain-core-v*.*.*"
+      - "langchain-singlestore-v*.*.*"
+      - "langgraph-singlestore-v*.*.*"
 
 jobs:
   build-and-publish:
@@ -15,6 +24,24 @@ jobs:
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
+
+      - name: Resolve package + version from tag
+        id: pkg
+        run: |
+          TAG="${GITHUB_REF_NAME}"
+          if [[ "$TAG" == singlestore-langchain-core-v* ]]; then
+            echo "name=singlestore-langchain-core" >> "$GITHUB_OUTPUT"
+            echo "version=${TAG#singlestore-langchain-core-v}" >> "$GITHUB_OUTPUT"
+          elif [[ "$TAG" == langchain-singlestore-v* ]]; then
+            echo "name=langchain-singlestore" >> "$GITHUB_OUTPUT"
+            echo "version=${TAG#langchain-singlestore-v}" >> "$GITHUB_OUTPUT"
+          elif [[ "$TAG" == langgraph-singlestore-v* ]]; then
+            echo "name=langgraph-singlestore" >> "$GITHUB_OUTPUT"
+            echo "version=${TAG#langgraph-singlestore-v}" >> "$GITHUB_OUTPUT"
+          else
+            echo "Unrecognised tag format: $TAG" >&2
+            exit 1
+          fi
 
       - name: Set up Python
         uses: actions/setup-python@v5
@@ -32,24 +59,40 @@ jobs:
           poetry config virtualenvs.in-project true
           poetry config pypi-token.pypi ${{ secrets.PYPI_TOKEN }}
 
-      - name: Install dependencies
-        run: poetry install --no-root
-
       - name: Set version from tag
+        working-directory: libs/${{ steps.pkg.outputs.name }}
         run: |
-          TAG_VERSION=${GITHUB_REF_NAME#v}
-          echo "Setting version to $TAG_VERSION in pyproject.toml"
-          sed -i "s/^version = \".*\"/version = \"$TAG_VERSION\"/" pyproject.toml
+          sed -i "s/^version = \".*\"/version = \"${{ steps.pkg.outputs.version }}\"/" pyproject.toml
 
+      # Path deps to singlestore-langchain-core must be rewritten to a version
+      # constraint before building, otherwise the resulting wheel would embed a
+      # local-path reference that PyPI installs cannot resolve.  Skip for the
+      # core package itself.
+      - name: Rewrite core path dep to version constraint
+        if: steps.pkg.outputs.name != 'singlestore-langchain-core'
+        working-directory: libs/${{ steps.pkg.outputs.name }}
+        run: |
+          CORE_VERSION=$(grep -m1 '^version' ../singlestore-langchain-core/pyproject.toml | sed -E 's/version = "(.*)"/\1/')
+          echo "Pinning singlestore-langchain-core to ^$CORE_VERSION"
+          sed -i "s|singlestore-langchain-core = { path = \"../singlestore-langchain-core\", develop = true }|singlestore-langchain-core = \"^${CORE_VERSION}\"|" pyproject.toml
+
+      # ``poetry build`` reads pyproject.toml directly and does not resolve or
+      # install dependencies, so we intentionally skip ``poetry install`` here.
+      # Running install would try to fetch ``singlestore-langchain-core`` from
+      # PyPI at its just-pinned version, which fails when core is being
+      # released in the same push.
       - name: Build package
+        working-directory: libs/${{ steps.pkg.outputs.name }}
         run: poetry build
 
       - name: Publish to PyPI
+        working-directory: libs/${{ steps.pkg.outputs.name }}
         run: poetry publish
 
       - name: Create GitHub Release
         uses: softprops/action-gh-release@v2
         with:
           tag_name: ${{ github.ref_name }}
+          name: "${{ steps.pkg.outputs.name }} ${{ steps.pkg.outputs.version }}"
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

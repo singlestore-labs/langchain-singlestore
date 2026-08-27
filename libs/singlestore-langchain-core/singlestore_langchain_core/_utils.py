@@ -1,41 +1,51 @@
+"""SingleStore connection helpers and shared enums.
+
+No LangChain / LangGraph imports live in this module so it can be shared by
+every SingleStore integration package.
+"""
+
 import hashlib
 from enum import Enum
 from importlib.metadata import PackageNotFoundError, version
+from typing import Optional
 
-# Connection attributes
-CONNECTOR_NAME = "langchain python sdk"
+DEFAULT_CONNECTOR_NAME = "langchain python sdk"
 
 
-def _get_connector_version() -> str:
-    """Get connector version by adding 2 to the package major version."""
+def compute_connector_version(package_name: str, *, fallback: str = "3.0.0") -> str:
+    """Return the connector version to advertise to SingleStore.
+
+    Historically the connector version is the package version with ``2`` added
+    to the major component (``1.5.0`` -> ``3.5.0``).  This preserves the wire
+    contract that pre-monorepo releases used.
+    """
     try:
-        pkg_version = version("langchain-singlestore")
-        # Parse version (e.g., "1.1.0" -> ["1", "1", "0"])
+        pkg_version = version(package_name)
         version_parts = pkg_version.split(".")
-        # Add 2 to major version: 1.1.0 -> 3.1.0
         major_version = int(version_parts[0]) + 2
         version_parts[0] = str(major_version)
         return ".".join(version_parts)
-    except PackageNotFoundError:
-        # Fallback if package is not installed
-        return "3.0.0"
+    except (PackageNotFoundError, ValueError):
+        return fallback
 
 
-CONNECTOR_VERSION = _get_connector_version()
+def set_connector_attributes(
+    connection_kwargs: dict,
+    *,
+    connector_name: str = DEFAULT_CONNECTOR_NAME,
+    connector_version: Optional[str] = None,
+) -> None:
+    """Stamp connector identity onto ``connection_kwargs['conn_attrs']``.
 
-
-def set_connector_attributes(connection_kwargs: dict) -> None:
-    """Set connector name and version in connection attributes.
-
-    Args:
-        connection_kwargs: Dictionary containing connection keyword arguments.
-            Will be modified in-place to add _connector_name and _connector_version.
+    ``connector_version`` may be ``None`` when the caller has no versioned
+    package to report; the attribute is simply omitted in that case.
     """
     if "conn_attrs" not in connection_kwargs:
         connection_kwargs["conn_attrs"] = {}
 
-    connection_kwargs["conn_attrs"]["_connector_name"] = CONNECTOR_NAME
-    connection_kwargs["conn_attrs"]["_connector_version"] = CONNECTOR_VERSION
+    connection_kwargs["conn_attrs"]["_connector_name"] = connector_name
+    if connector_version is not None:
+        connection_kwargs["conn_attrs"]["_connector_version"] = connector_version
 
 
 class DistanceStrategy(str, Enum):

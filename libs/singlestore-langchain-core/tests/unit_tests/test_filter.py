@@ -5,7 +5,7 @@ import json
 
 import pytest
 
-from langchain_singlestore._filter import _get_match_param_function, _parse_filter
+from singlestore_langchain_core._filter import _get_match_param_function, _parse_filter
 
 
 # Tests for _get_match_param_function
