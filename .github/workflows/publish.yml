@@ -65,8 +65,9 @@ jobs:
           sed -i "s/^version = \".*\"/version = \"${{ steps.pkg.outputs.version }}\"/" pyproject.toml
 
       # Path deps to singlestore-langchain-core must be rewritten to a version
-      # constraint before building, otherwise Poetry will refuse to publish a
-      # wheel that references a local path.  Skip for the core package itself.
+      # constraint before building, otherwise the resulting wheel would embed a
+      # local-path reference that PyPI installs cannot resolve.  Skip for the
+      # core package itself.
       - name: Rewrite core path dep to version constraint
         if: steps.pkg.outputs.name != 'singlestore-langchain-core'
         working-directory: libs/${{ steps.pkg.outputs.name }}
@@ -75,10 +76,11 @@ jobs:
           echo "Pinning singlestore-langchain-core to ^$CORE_VERSION"
           sed -i "s|singlestore-langchain-core = { path = \"../singlestore-langchain-core\", develop = true }|singlestore-langchain-core = \"^${CORE_VERSION}\"|" pyproject.toml
 
-      - name: Install dependencies
-        working-directory: libs/${{ steps.pkg.outputs.name }}
-        run: poetry install --no-root
-
+      # ``poetry build`` reads pyproject.toml directly and does not resolve or
+      # install dependencies, so we intentionally skip ``poetry install`` here.
+      # Running install would try to fetch ``singlestore-langchain-core`` from
+      # PyPI at its just-pinned version, which fails when core is being
+      # released in the same push.
       - name: Build package
         working-directory: libs/${{ steps.pkg.outputs.name }}
         run: poetry build
