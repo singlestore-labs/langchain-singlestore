@@ -1,0 +1,123 @@
+"""Unit tests for singlestore_langchain_core._connection."""
+
+import unittest
+from unittest.mock import MagicMock, patch
+
+import pytest
+from sqlalchemy.pool import Pool, QueuePool
+
+from singlestore_langchain_core._connection import (
+    DefaultConnectionPool,
+    SingleConnectionPool,
+    create_connection_pool,
+)
+
+
+class TestSingleConnectionPool(unittest.TestCase):
+    def test_connect_returns_wrapped_connection(self) -> None:
+        conn = MagicMock(name="connection")
+        pool = SingleConnectionPool(conn)
+        assert pool.connect() is conn
+
+    def test_connect_returns_none_when_no_connection(self) -> None:
+        pool = SingleConnectionPool()
+        assert pool.connect() is None
+
+    def test_is_pool_subclass(self) -> None:
+        assert isinstance(SingleConnectionPool(MagicMock()), Pool)
+
+    def test_multiple_calls_return_same_connection(self) -> None:
+        conn = MagicMock(name="connection")
+        pool = SingleConnectionPool(conn)
+        assert pool.connect() is pool.connect()
+
+
+class TestDefaultConnectionPool(unittest.TestCase):
+    def test_stores_configuration(self) -> None:
+        kwargs = {"host": "example", "port": 3306}
+        pool = DefaultConnectionPool(
+            pool_size=7,
+            max_overflow=3,
+            timeout=15.0,
+            connection_kwargs=kwargs,
+        )
+        assert pool._pool_size == 7
+        assert pool._max_overflow == 3
+        assert pool._timeout == 15.0
+        assert pool._connection_kwargs == kwargs
+
+    def test_default_kwargs(self) -> None:
+        pool = DefaultConnectionPool()
+        assert pool._pool_size == 5
+        assert pool._max_overflow == 10
+        assert pool._timeout == 30
+        assert pool._connection_kwargs == {}
+
+    def test_none_connection_kwargs_becomes_empty_dict(self) -> None:
+        pool = DefaultConnectionPool(connection_kwargs=None)
+        assert pool._connection_kwargs == {}
+
+    def test_inner_pool_is_queue_pool(self) -> None:
+        pool = DefaultConnectionPool()
+        assert isinstance(pool._pool, QueuePool)
+
+    def test_is_pool_subclass(self) -> None:
+        assert isinstance(DefaultConnectionPool(), Pool)
+
+    def test_get_connection_calls_singlestoredb_connect(self) -> None:
+        kwargs = {"host": "h", "user": "u"}
+        with patch("singlestore_langchain_core._connection.connect") as mock_connect:
+            mock_connect.return_value = MagicMock(name="conn")
+            pool = DefaultConnectionPool(connection_kwargs=kwargs)
+            result = pool._get_connection()
+            mock_connect.assert_called_once_with(**kwargs)
+            assert result is mock_connect.return_value
+
+    def test_connect_delegates_to_inner_pool(self) -> None:
+        pool = DefaultConnectionPool()
+        with patch.object(pool._pool, "connect") as mock_connect:
+            mock_connect.return_value = MagicMock(name="conn_proxy")
+            result = pool.connect()
+            mock_connect.assert_called_once_with()
+            assert result is mock_connect.return_value
+
+
+class TestCreateConnectionPool(unittest.TestCase):
+    def test_raises_when_both_connection_and_pool_provided(self) -> None:
+        conn = MagicMock(name="connection")
+        provided_pool = MagicMock(spec=Pool)
+        with pytest.raises(ValueError, match="Cannot specify both"):
+            create_connection_pool(connection=conn, connection_pool=provided_pool)
+
+    def test_returns_single_connection_pool_when_connection_given(self) -> None:
+        conn = MagicMock(name="connection")
+        pool = create_connection_pool(connection=conn)
+        assert isinstance(pool, SingleConnectionPool)
+        assert pool.connect() is conn
+
+    def test_returns_provided_pool_as_is(self) -> None:
+        provided_pool = MagicMock(spec=Pool)
+        result = create_connection_pool(connection_pool=provided_pool)
+        assert result is provided_pool
+
+    def test_returns_default_pool_with_no_arguments(self) -> None:
+        pool = create_connection_pool()
+        assert isinstance(pool, DefaultConnectionPool)
+        assert pool._pool_size == 5
+        assert pool._max_overflow == 10
+        assert pool._timeout == 30
+        assert pool._connection_kwargs == {}
+
+    def test_forwards_pool_parameters_to_default_pool(self) -> None:
+        kwargs = {"host": "example", "database": "db"}
+        pool = create_connection_pool(
+            pool_size=2,
+            max_overflow=4,
+            timeout=1.5,
+            connection_kwargs=kwargs,
+        )
+        assert isinstance(pool, DefaultConnectionPool)
+        assert pool._pool_size == 2
+        assert pool._max_overflow == 4
+        assert pool._timeout == 1.5
+        assert pool._connection_kwargs == kwargs
