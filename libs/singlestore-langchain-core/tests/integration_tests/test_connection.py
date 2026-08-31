@@ -9,7 +9,7 @@ from typing import Any
 from sqlalchemy.pool import QueuePool
 
 from singlestore_langchain_core._connection import (
-    DefaultConnectionPool,
+    QueueConnectionPool,
     SingleConnectionPool,
     create_connection_pool,
 )
@@ -45,7 +45,7 @@ class TestDefaultConnectionPoolIntegration:
     def test_connect_yields_working_connection(
         self, connection_parameters: ConnectionParameters
     ) -> None:
-        pool = DefaultConnectionPool(
+        pool = QueueConnectionPool(
             pool_size=2,
             max_overflow=1,
             timeout=10,
@@ -61,7 +61,7 @@ class TestDefaultConnectionPoolIntegration:
     def test_pool_reuses_connections(
         self, connection_parameters: ConnectionParameters
     ) -> None:
-        pool = DefaultConnectionPool(
+        pool = QueueConnectionPool(
             pool_size=1,
             max_overflow=0,
             timeout=10,
@@ -84,7 +84,7 @@ class TestDefaultConnectionPoolIntegration:
             timeout=10,
             connection_kwargs=connection_parameters.as_kwargs(),
         )
-        assert isinstance(pool, DefaultConnectionPool)
+        assert isinstance(pool, QueueConnectionPool)
         proxy = pool.connect()
         try:
             assert _fetch_one(proxy)[0] == 1
@@ -96,9 +96,7 @@ class TestCreateConnectionPoolIntegration:
     def test_forwards_provided_pool(
         self, connection_parameters: ConnectionParameters
     ) -> None:
-        inner = DefaultConnectionPool(
-            connection_kwargs=connection_parameters.as_kwargs()
-        )
+        inner = QueueConnectionPool(connection_kwargs=connection_parameters.as_kwargs())
         result = create_connection_pool(connection_pool=inner)
         assert result is inner
         proxy = result.connect()

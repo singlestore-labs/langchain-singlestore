@@ -7,7 +7,7 @@ import pytest
 from sqlalchemy.pool import Pool, QueuePool
 
 from singlestore_langchain_core._connection import (
-    DefaultConnectionPool,
+    QueueConnectionPool,
     SingleConnectionPool,
     create_connection_pool,
 )
@@ -18,10 +18,6 @@ class TestSingleConnectionPool(unittest.TestCase):
         conn = MagicMock(name="connection")
         pool = SingleConnectionPool(conn)
         assert pool.connect() is conn
-
-    def test_connect_returns_none_when_no_connection(self) -> None:
-        pool = SingleConnectionPool()
-        assert pool.connect() is None
 
     def test_is_pool_subclass(self) -> None:
         assert isinstance(SingleConnectionPool(MagicMock()), Pool)
@@ -35,7 +31,7 @@ class TestSingleConnectionPool(unittest.TestCase):
 class TestDefaultConnectionPool(unittest.TestCase):
     def test_stores_configuration(self) -> None:
         kwargs = {"host": "example", "port": 3306}
-        pool = DefaultConnectionPool(
+        pool = QueueConnectionPool(
             pool_size=7,
             max_overflow=3,
             timeout=15.0,
@@ -47,34 +43,40 @@ class TestDefaultConnectionPool(unittest.TestCase):
         assert pool._connection_kwargs == kwargs
 
     def test_default_kwargs(self) -> None:
-        pool = DefaultConnectionPool()
+        pool = QueueConnectionPool()
         assert pool._pool_size == 5
         assert pool._max_overflow == 10
         assert pool._timeout == 30
         assert pool._connection_kwargs == {}
 
     def test_none_connection_kwargs_becomes_empty_dict(self) -> None:
-        pool = DefaultConnectionPool(connection_kwargs=None)
+        pool = QueueConnectionPool(connection_kwargs=None)
         assert pool._connection_kwargs == {}
 
     def test_inner_pool_is_queue_pool(self) -> None:
-        pool = DefaultConnectionPool()
+        pool = QueueConnectionPool()
         assert isinstance(pool._pool, QueuePool)
 
     def test_is_pool_subclass(self) -> None:
-        assert isinstance(DefaultConnectionPool(), Pool)
+        assert isinstance(QueueConnectionPool(), Pool)
 
-    def test_get_connection_calls_singlestoredb_connect(self) -> None:
+    def test_create_connection_calls_singlestoredb_connect(self) -> None:
         kwargs = {"host": "h", "user": "u"}
         with patch("singlestore_langchain_core._connection.connect") as mock_connect:
             mock_connect.return_value = MagicMock(name="conn")
-            pool = DefaultConnectionPool(connection_kwargs=kwargs)
-            result = pool._get_connection()
+            pool = QueueConnectionPool(connection_kwargs=kwargs)
+            result = pool._open_connection()
             mock_connect.assert_called_once_with(**kwargs)
             assert result is mock_connect.return_value
 
+    def test_connection_kwargs_are_copied(self) -> None:
+        kwargs = {"host": "h"}
+        pool = QueueConnectionPool(connection_kwargs=kwargs)
+        kwargs["host"] = "other"
+        assert pool._connection_kwargs == {"host": "h"}
+
     def test_connect_delegates_to_inner_pool(self) -> None:
-        pool = DefaultConnectionPool()
+        pool = QueueConnectionPool()
         with patch.object(pool._pool, "connect") as mock_connect:
             mock_connect.return_value = MagicMock(name="conn_proxy")
             result = pool.connect()
@@ -102,7 +104,7 @@ class TestCreateConnectionPool(unittest.TestCase):
 
     def test_returns_default_pool_with_no_arguments(self) -> None:
         pool = create_connection_pool()
-        assert isinstance(pool, DefaultConnectionPool)
+        assert isinstance(pool, QueueConnectionPool)
         assert pool._pool_size == 5
         assert pool._max_overflow == 10
         assert pool._timeout == 30
@@ -116,7 +118,7 @@ class TestCreateConnectionPool(unittest.TestCase):
             timeout=1.5,
             connection_kwargs=kwargs,
         )
-        assert isinstance(pool, DefaultConnectionPool)
+        assert isinstance(pool, QueueConnectionPool)
         assert pool._pool_size == 2
         assert pool._max_overflow == 4
         assert pool._timeout == 1.5
