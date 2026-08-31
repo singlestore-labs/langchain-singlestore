@@ -8,6 +8,9 @@ implementation detail; direct use by application code is not supported.
 
 from importlib import metadata
 
+from singlestore_langchain_core._connection import (
+    create_connection_pool,
+)
 from singlestore_langchain_core._filter import (
     FilterTypedDict,
     _get_match_param_function,
@@ -40,5 +43,6 @@ __all__ = [
     "compute_connector_version",
     "hash",
     "set_connector_attributes",
+    "create_connection_pool",
     "__version__",
 ]

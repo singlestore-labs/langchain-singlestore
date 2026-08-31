@@ -5,3 +5,4 @@ __pycache__
 poetry.lock
 .pytest_cache
 .benchmarks
+.mypy_cache_test
