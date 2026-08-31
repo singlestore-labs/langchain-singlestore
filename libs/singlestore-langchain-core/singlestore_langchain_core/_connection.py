@@ -19,19 +19,55 @@ from singlestoredb.connection import Connection, connect
 from sqlalchemy.pool import Pool, QueuePool
 
 
+class _CallerOwnedConnection:
+    """DBAPI-like proxy over a caller-owned :class:`Connection`.
+
+    Consumers of a pool follow the ``connect()``/``close()`` idiom, but for
+    :class:`SingleConnectionPool` the underlying connection is owned by the
+    caller and must outlive the checkout. This proxy forwards every attribute
+    to the wrapped connection while making ``close()`` a no-op so subsequent
+    checkouts keep working.
+    """
+
+    __slots__ = ("_connection",)
+
+    def __init__(self, connection: Connection) -> None:
+        object.__setattr__(self, "_connection", connection)
+
+    def close(self) -> None:
+        return None
+
+    def __getattr__(self, name: str) -> Any:
+        if name == "_connection":
+            raise AttributeError(name)
+        return getattr(self._connection, name)
+
+    def __enter__(self) -> Connection:
+        return self._connection
+
+    def __exit__(self, exc_type: Any, exc: Any, tb: Any) -> None:
+        return None
+
+
 class SingleConnectionPool(Pool):
     """Pool that returns the same pre-established connection on every call.
 
     The connection is owned by the caller; this class does not open or close
     it. Intended for scenarios where a single, long-lived connection is
-    reused across operations.
+    reused across operations. Each :meth:`connect` returns a lightweight
+    proxy so callers may follow the standard ``connect()``/``close()``
+    idiom without tearing down the shared connection.
     """
 
     def __init__(self, connection: Connection) -> None:
         self._connection = connection
 
     def connect(self) -> Any:  # type: ignore[override]
-        return self._connection
+        return _CallerOwnedConnection(self._connection)
+
+    def dispose(self) -> None:  # type: ignore[override]
+        # Caller owns the underlying connection; nothing to release here.
+        return None
 
 
 class QueueConnectionPool(Pool):
@@ -74,6 +110,9 @@ class QueueConnectionPool(Pool):
 
     def connect(self) -> Any:  # type: ignore[override]
         return self._pool.connect()
+
+    def dispose(self) -> None:  # type: ignore[override]
+        self._pool.dispose()
 
 
 def create_connection_pool(

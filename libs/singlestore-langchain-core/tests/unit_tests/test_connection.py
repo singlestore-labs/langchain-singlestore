@@ -14,18 +14,47 @@ from singlestore_langchain_core._connection import (
 
 
 class TestSingleConnectionPool(unittest.TestCase):
-    def test_connect_returns_wrapped_connection(self) -> None:
+    def test_connect_forwards_to_wrapped_connection(self) -> None:
         conn = MagicMock(name="connection")
         pool = SingleConnectionPool(conn)
-        assert pool.connect() is conn
+        proxy = pool.connect()
+        # attribute access is forwarded
+        assert proxy.cursor() is conn.cursor.return_value
+        conn.cursor.assert_called_once_with()
 
     def test_is_pool_subclass(self) -> None:
         assert isinstance(SingleConnectionPool(MagicMock()), Pool)
 
-    def test_multiple_calls_return_same_connection(self) -> None:
+    def test_close_does_not_close_underlying_connection(self) -> None:
         conn = MagicMock(name="connection")
         pool = SingleConnectionPool(conn)
-        assert pool.connect() is pool.connect()
+        proxy = pool.connect()
+        proxy.close()
+        conn.close.assert_not_called()
+
+    def test_multiple_checkouts_share_underlying_connection(self) -> None:
+        conn = MagicMock(name="connection")
+        pool = SingleConnectionPool(conn)
+        p1 = pool.connect()
+        p1.close()
+        p2 = pool.connect()
+        # Both proxies target the same live connection.
+        assert p1.cursor() is conn.cursor.return_value
+        assert p2.cursor() is conn.cursor.return_value
+        conn.close.assert_not_called()
+
+    def test_context_manager_yields_connection_and_does_not_close(self) -> None:
+        conn = MagicMock(name="connection")
+        pool = SingleConnectionPool(conn)
+        with pool.connect() as entered:
+            assert entered is conn
+        conn.close.assert_not_called()
+
+    def test_dispose_is_noop(self) -> None:
+        conn = MagicMock(name="connection")
+        pool = SingleConnectionPool(conn)
+        pool.dispose()
+        conn.close.assert_not_called()
 
 
 class TestDefaultConnectionPool(unittest.TestCase):
@@ -83,6 +112,12 @@ class TestDefaultConnectionPool(unittest.TestCase):
             mock_connect.assert_called_once_with()
             assert result is mock_connect.return_value
 
+    def test_dispose_delegates_to_inner_pool(self) -> None:
+        pool = QueueConnectionPool()
+        with patch.object(pool._pool, "dispose") as mock_dispose:
+            pool.dispose()
+            mock_dispose.assert_called_once_with()
+
 
 class TestCreateConnectionPool(unittest.TestCase):
     def test_raises_when_both_connection_and_pool_provided(self) -> None:
@@ -95,7 +130,8 @@ class TestCreateConnectionPool(unittest.TestCase):
         conn = MagicMock(name="connection")
         pool = create_connection_pool(connection=conn)
         assert isinstance(pool, SingleConnectionPool)
-        assert pool.connect() is conn
+        # Proxy forwards to the wrapped connection.
+        assert pool.connect().cursor() is conn.cursor.return_value
 
     def test_returns_provided_pool_as_is(self) -> None:
         provided_pool = MagicMock(spec=Pool)

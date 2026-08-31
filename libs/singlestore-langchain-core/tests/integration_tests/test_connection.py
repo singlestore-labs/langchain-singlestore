@@ -27,18 +27,31 @@ def _fetch_one(conn: Any) -> Any:
 
 
 class TestSingleConnectionPoolIntegration:
-    def test_returns_wrapped_live_connection(self, raw_connection: Any) -> None:
+    def test_proxy_forwards_to_live_connection(self, raw_connection: Any) -> None:
         pool = SingleConnectionPool(raw_connection)
-        conn = pool.connect()
-        assert conn is raw_connection
-        row = _fetch_one(conn)
-        assert row[0] == 1
+        proxy = pool.connect()
+        assert _fetch_one(proxy)[0] == 1
+
+    def test_close_does_not_shut_down_caller_connection(
+        self, raw_connection: Any
+    ) -> None:
+        pool = SingleConnectionPool(raw_connection)
+        first = pool.connect()
+        assert _fetch_one(first)[0] == 1
+        first.close()  # must not close the underlying caller-owned connection
+        second = pool.connect()
+        assert _fetch_one(second)[0] == 1
+        # The caller's connection is still alive after pool.dispose().
+        pool.dispose()
+        assert _fetch_one(raw_connection)[0] == 1
 
     def test_via_factory(self, raw_connection: Any) -> None:
         pool = create_connection_pool(connection=raw_connection)
         assert isinstance(pool, SingleConnectionPool)
-        assert pool.connect() is raw_connection
-        assert _fetch_one(pool.connect())[0] == 1
+        proxy = pool.connect()
+        assert _fetch_one(proxy)[0] == 1
+        proxy.close()
+        assert _fetch_one(raw_connection)[0] == 1
 
 
 class TestDefaultConnectionPoolIntegration:
@@ -85,6 +98,27 @@ class TestDefaultConnectionPoolIntegration:
             connection_kwargs=connection_parameters.as_kwargs(),
         )
         assert isinstance(pool, QueueConnectionPool)
+        proxy = pool.connect()
+        try:
+            assert _fetch_one(proxy)[0] == 1
+        finally:
+            proxy.close()
+
+    def test_dispose_releases_inner_pool(
+        self, connection_parameters: ConnectionParameters
+    ) -> None:
+        pool = QueueConnectionPool(
+            pool_size=1,
+            max_overflow=0,
+            timeout=10,
+            connection_kwargs=connection_parameters.as_kwargs(),
+        )
+        proxy = pool.connect()
+        assert _fetch_one(proxy)[0] == 1
+        proxy.close()
+        # dispose must not raise NotImplementedError and must free the pool.
+        pool.dispose()
+        # After dispose the pool is still usable for fresh checkouts.
         proxy = pool.connect()
         try:
             assert _fetch_one(proxy)[0] == 1
