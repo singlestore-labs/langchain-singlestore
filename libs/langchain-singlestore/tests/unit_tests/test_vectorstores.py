@@ -4,6 +4,7 @@ import unittest
 from unittest.mock import MagicMock, patch
 
 from langchain_core.embeddings import Embeddings
+from sqlalchemy.pool import Pool
 
 from langchain_singlestore._utils import (
     DistanceStrategy,
@@ -17,203 +18,122 @@ class MockEmbeddings(Embeddings):
     """Mock embeddings for testing."""
 
     def embed_documents(self, texts: list[str]) -> list[list[float]]:
-        """Return mock embeddings."""
         return [[0.1, 0.2, 0.3] for _ in texts]
 
     def embed_query(self, text: str) -> list[float]:
-        """Return mock embedding."""
         return [0.1, 0.2, 0.3]
 
 
+def _make_vs(**kwargs: object) -> SingleStoreVectorStore:
+    """Build a vector store backed by a mock pool so tests never touch the DB."""
+    params: dict = {
+        "embedding": MockEmbeddings(),
+        "connection_pool": MagicMock(spec=Pool),
+    }
+    params.update(kwargs)
+    return SingleStoreVectorStore(**params)  # type: ignore[arg-type]
+
+
 class TestSingleStoreVectorStoreInit(unittest.TestCase):
-    """Test SingleStoreVectorStore initialization."""
-
-    def setUp(self) -> None:
-        """Set up test fixtures."""
-        self.patcher = patch("langchain_singlestore.vectorstores.QueuePool")
-        self.mock_pool_class = self.patcher.start()
-        self.mock_pool = MagicMock()
-        self.mock_pool_class.return_value = self.mock_pool
-
-    def tearDown(self) -> None:
-        """Clean up patches."""
-        self.patcher.stop()
-
     def test_init_with_required_params(self) -> None:
-        """Test initialization with required parameters."""
-        embeddings = MockEmbeddings()
-        vs = SingleStoreVectorStore(embedding=embeddings, host="localhost")
-
-        assert vs.embedding == embeddings
+        vs = _make_vs()
+        assert isinstance(vs.embedding, MockEmbeddings)
         assert vs.table_name == "embeddings"
         assert vs.distance_strategy == DistanceStrategy.DOT_PRODUCT
 
     def test_init_sets_default_table_name(self) -> None:
-        """Test that default table name is set."""
-        embeddings = MockEmbeddings()
-        vs = SingleStoreVectorStore(embedding=embeddings, host="localhost")
-
+        vs = _make_vs()
         assert vs.table_name == "embeddings"
 
     def test_init_custom_table_name(self) -> None:
-        """Test that custom table name is used."""
-        embeddings = MockEmbeddings()
-        vs = SingleStoreVectorStore(
-            embedding=embeddings, host="localhost", table_name="custom_embeddings"
-        )
-
+        vs = _make_vs(table_name="custom_embeddings")
         assert vs.table_name == "custom_embeddings"
 
     def test_init_sets_field_names(self) -> None:
-        """Test that field names are set correctly."""
-        embeddings = MockEmbeddings()
-        vs = SingleStoreVectorStore(embedding=embeddings, host="localhost")
-
+        vs = _make_vs()
         assert vs.content_field == "content"
         assert vs.metadata_field == "metadata"
         assert vs.vector_field == "vector"
         assert vs.id_field == "id"
 
     def test_init_custom_field_names(self) -> None:
-        """Test that custom field names are used."""
-        embeddings = MockEmbeddings()
-        vs = SingleStoreVectorStore(
-            embedding=embeddings,
-            host="localhost",
+        vs = _make_vs(
             content_field="text",
             metadata_field="meta",
             vector_field="vec",
             id_field="doc_id",
         )
-
         assert vs.content_field == "text"
         assert vs.metadata_field == "meta"
         assert vs.vector_field == "vec"
         assert vs.id_field == "doc_id"
 
     def test_init_distance_strategy(self) -> None:
-        """Test that distance strategy is set."""
-        embeddings = MockEmbeddings()
-        vs = SingleStoreVectorStore(
-            embedding=embeddings,
-            host="localhost",
-            distance_strategy=DistanceStrategy.EUCLIDEAN_DISTANCE,
-        )
-
+        vs = _make_vs(distance_strategy=DistanceStrategy.EUCLIDEAN_DISTANCE)
         assert vs.distance_strategy == DistanceStrategy.EUCLIDEAN_DISTANCE
 
     def test_init_vector_index_disabled_by_default(self) -> None:
-        """Test that vector index is disabled by default."""
-        embeddings = MockEmbeddings()
-        vs = SingleStoreVectorStore(embedding=embeddings, host="localhost")
-
+        vs = _make_vs()
         assert vs.use_vector_index is False
 
     def test_init_vector_index_enabled(self) -> None:
-        """Test that vector index can be enabled."""
-        embeddings = MockEmbeddings()
-        vs = SingleStoreVectorStore(
-            embedding=embeddings, host="localhost", use_vector_index=True
-        )
-
+        vs = _make_vs(use_vector_index=True)
         assert vs.use_vector_index is True
 
     def test_init_full_text_search_disabled_by_default(self) -> None:
-        """Test that full-text search is disabled by default."""
-        embeddings = MockEmbeddings()
-        vs = SingleStoreVectorStore(embedding=embeddings, host="localhost")
-
+        vs = _make_vs()
         assert vs.use_full_text_search is False
 
     def test_init_full_text_search_enabled(self) -> None:
-        """Test that full-text search can be enabled."""
-        embeddings = MockEmbeddings()
-        vs = SingleStoreVectorStore(
-            embedding=embeddings, host="localhost", use_full_text_search=True
-        )
-
+        vs = _make_vs(use_full_text_search=True)
         assert vs.use_full_text_search is True
 
     def test_init_sets_connector_attributes(self) -> None:
-        """Test that connector attributes are set."""
-        embeddings = MockEmbeddings()
-        vs = SingleStoreVectorStore(embedding=embeddings, host="localhost")
-
+        vs = _make_vs(host="localhost")
         assert "conn_attrs" in vs.connection_kwargs
         assert "_connector_name" in vs.connection_kwargs["conn_attrs"]
         assert "_connector_version" in vs.connection_kwargs["conn_attrs"]
 
     def test_init_vector_size_default(self) -> None:
-        """Test that vector_size defaults to 1536."""
-        embeddings = MockEmbeddings()
-        vs = SingleStoreVectorStore(embedding=embeddings, host="localhost")
-
+        vs = _make_vs()
         assert vs.vector_size == 1536
 
     def test_init_custom_vector_size(self) -> None:
-        """Test that custom vector_size is used."""
-        embeddings = MockEmbeddings()
-        vs = SingleStoreVectorStore(
-            embedding=embeddings, host="localhost", vector_size=768
-        )
-
+        vs = _make_vs(vector_size=768)
         assert vs.vector_size == 768
 
     def test_init_pool_settings(self) -> None:
-        """Test that connection pool settings are configured."""
-        embeddings = MockEmbeddings()
-        SingleStoreVectorStore(
-            embedding=embeddings,
-            host="localhost",
-            pool_size=10,
-            max_overflow=20,
-            timeout=60,
-        )
-
-        # Verify QueuePool was called with correct parameters
-        self.mock_pool_class.assert_called_once()
-        call_kwargs = self.mock_pool_class.call_args[1]
+        """Pool sizing kwargs are forwarded to create_connection_pool."""
+        with patch(
+            "langchain_singlestore.vectorstores.create_connection_pool"
+        ) as mock_factory:
+            mock_factory.return_value = MagicMock(spec=Pool)
+            SingleStoreVectorStore(
+                embedding=MockEmbeddings(),
+                host="localhost",
+                pool_size=10,
+                max_overflow=20,
+                timeout=60,
+            )
+        mock_factory.assert_called_once()
+        call_kwargs = mock_factory.call_args.kwargs
         assert call_kwargs["pool_size"] == 10
         assert call_kwargs["max_overflow"] == 20
         assert call_kwargs["timeout"] == 60
 
 
 class TestSingleStoreVectorStoreSanitize(unittest.TestCase):
-    """Test _sanitize_input method."""
-
-    def setUp(self) -> None:
-        """Set up test fixtures."""
-        self.patcher = patch("langchain_singlestore.vectorstores.QueuePool")
-        self.mock_pool_class = self.patcher.start()
-        self.mock_pool = MagicMock()
-        self.mock_pool_class.return_value = self.mock_pool
-
-    def tearDown(self) -> None:
-        """Clean up patches."""
-        self.patcher.stop()
-
     def test_sanitize_removes_special_chars(self) -> None:
-        """Test that sanitize removes special characters."""
-        embeddings = MockEmbeddings()
-        vs = SingleStoreVectorStore(embedding=embeddings, host="localhost")
-
-        result = vs._sanitize_input("test!@#$%^&*()input")
-        assert result == "testinput"
+        vs = _make_vs()
+        assert vs._sanitize_input("test!@#$%^&*()input") == "testinput"
 
     def test_sanitize_keeps_alphanumeric_and_underscore(self) -> None:
-        """Test that sanitize keeps alphanumeric and underscore."""
-        embeddings = MockEmbeddings()
-        vs = SingleStoreVectorStore(embedding=embeddings, host="localhost")
-
-        result = vs._sanitize_input("test_123_input")
-        assert result == "test_123_input"
+        vs = _make_vs()
+        assert vs._sanitize_input("test_123_input") == "test_123_input"
 
 
 class TestSingleStoreVectorStoreSearchStrategy(unittest.TestCase):
-    """Test SearchStrategy enum."""
-
     def test_search_strategies_defined(self) -> None:
-        """Test that all search strategies are defined."""
         assert hasattr(SingleStoreVectorStore.SearchStrategy, "VECTOR_ONLY")
         assert hasattr(SingleStoreVectorStore.SearchStrategy, "TEXT_ONLY")
         assert hasattr(SingleStoreVectorStore.SearchStrategy, "FILTER_BY_TEXT")
@@ -221,168 +141,97 @@ class TestSingleStoreVectorStoreSearchStrategy(unittest.TestCase):
         assert hasattr(SingleStoreVectorStore.SearchStrategy, "WEIGHTED_SUM")
 
     def test_search_strategy_values(self) -> None:
-        """Test search strategy values."""
         assert SingleStoreVectorStore.SearchStrategy.VECTOR_ONLY == "VECTOR_ONLY"
         assert SingleStoreVectorStore.SearchStrategy.TEXT_ONLY == "TEXT_ONLY"
         assert SingleStoreVectorStore.SearchStrategy.FILTER_BY_TEXT == "FILTER_BY_TEXT"
 
 
 class TestSingleStoreVectorStoreEmbeddings(unittest.TestCase):
-    """Test embeddings property."""
-
-    def setUp(self) -> None:
-        """Set up test fixtures."""
-        self.patcher = patch("langchain_singlestore.vectorstores.QueuePool")
-        self.mock_pool_class = self.patcher.start()
-        self.mock_pool = MagicMock()
-        self.mock_pool_class.return_value = self.mock_pool
-
-    def tearDown(self) -> None:
-        """Clean up patches."""
-        self.patcher.stop()
-
     def test_embeddings_property(self) -> None:
-        """Test that embeddings property returns the embedding model."""
         embeddings = MockEmbeddings()
-        vs = SingleStoreVectorStore(embedding=embeddings, host="localhost")
-
+        vs = _make_vs(embedding=embeddings)
         assert vs.embeddings is embeddings
 
 
 class TestFulltextScoringModeToSql(unittest.TestCase):
-    """Test _fulltext_scoring_mode_to_sql method."""
-
-    def setUp(self) -> None:
-        """Set up test fixtures."""
-        self.patcher = patch("langchain_singlestore.vectorstores.QueuePool")
-        self.mock_pool_class = self.patcher.start()
-        self.mock_pool = MagicMock()
-        self.mock_pool_class.return_value = self.mock_pool
-
-    def tearDown(self) -> None:
-        """Clean up patches."""
-        self.patcher.stop()
-
     def test_match_mode_with_v1_index(self) -> None:
-        """Test MATCH mode with full-text index V1."""
-        embeddings = MockEmbeddings()
-        vs = SingleStoreVectorStore(
-            embedding=embeddings,
-            host="localhost",
+        vs = _make_vs(
             use_full_text_search=True,
             full_text_index_version=FullTextIndexVersion.V1,
         )
-
         sql, query = vs._fulltext_scoring_mode_to_sql(
             FullTextScoringMode.MATCH, "test query"
         )
-
         assert sql == "MATCH (content) AGAINST (%s)"
         assert query == "test query"
 
     def test_match_mode_with_v2_index(self) -> None:
-        """Test MATCH mode with full-text index V2 uses TABLE syntax."""
-        embeddings = MockEmbeddings()
-        vs = SingleStoreVectorStore(
-            embedding=embeddings,
-            host="localhost",
+        vs = _make_vs(
             use_full_text_search=True,
             full_text_index_version=FullTextIndexVersion.V2,
         )
-
         sql, query = vs._fulltext_scoring_mode_to_sql(
             FullTextScoringMode.MATCH, "test query"
         )
-
         assert sql == "MATCH (TABLE embeddings) AGAINST (%s)"
         assert query == "content:(test query)"
 
     def test_bm25_mode_with_v2_index(self) -> None:
-        """Test BM25 mode with full-text index V2."""
-        embeddings = MockEmbeddings()
-        vs = SingleStoreVectorStore(
-            embedding=embeddings,
-            host="localhost",
+        vs = _make_vs(
             use_full_text_search=True,
             full_text_index_version=FullTextIndexVersion.V2,
         )
-
         sql, query = vs._fulltext_scoring_mode_to_sql(
             FullTextScoringMode.BM25, "test query"
         )
-
         assert sql == "BM25(embeddings, %s)"
         assert query == "content:(test query)"
 
     def test_bm25_global_mode_with_v2_index(self) -> None:
-        """Test BM25_GLOBAL mode with full-text index V2."""
-        embeddings = MockEmbeddings()
-        vs = SingleStoreVectorStore(
-            embedding=embeddings,
-            host="localhost",
+        vs = _make_vs(
             use_full_text_search=True,
             full_text_index_version=FullTextIndexVersion.V2,
         )
-
         sql, query = vs._fulltext_scoring_mode_to_sql(
             FullTextScoringMode.BM25_GLOBAL, "test query"
         )
-
         assert sql == "BM25_GLOBAL(embeddings, %s)"
         assert query == "content:(test query)"
 
     def test_custom_content_field_with_v1(self) -> None:
-        """Test that custom content field is used in SQL with V1."""
-        embeddings = MockEmbeddings()
-        vs = SingleStoreVectorStore(
-            embedding=embeddings,
-            host="localhost",
+        vs = _make_vs(
             use_full_text_search=True,
             full_text_index_version=FullTextIndexVersion.V1,
             content_field="text_content",
         )
-
         sql, query = vs._fulltext_scoring_mode_to_sql(
             FullTextScoringMode.MATCH, "search terms"
         )
-
         assert sql == "MATCH (text_content) AGAINST (%s)"
         assert query == "search terms"
 
     def test_custom_content_field_with_v2_match(self) -> None:
-        """Test custom content field with V2 and MATCH mode."""
-        embeddings = MockEmbeddings()
-        vs = SingleStoreVectorStore(
-            embedding=embeddings,
-            host="localhost",
+        vs = _make_vs(
             use_full_text_search=True,
             full_text_index_version=FullTextIndexVersion.V2,
             content_field="text_content",
             table_name="my_docs",
         )
-
         sql, query = vs._fulltext_scoring_mode_to_sql(
             FullTextScoringMode.MATCH, "search terms"
         )
-
         assert sql == "MATCH (TABLE my_docs) AGAINST (%s)"
         assert query == "text_content:(search terms)"
 
     def test_custom_content_field_with_v2_bm25(self) -> None:
-        """Test custom content field with V2 and BM25 mode."""
-        embeddings = MockEmbeddings()
-        vs = SingleStoreVectorStore(
-            embedding=embeddings,
-            host="localhost",
+        vs = _make_vs(
             use_full_text_search=True,
             full_text_index_version=FullTextIndexVersion.V2,
             content_field="text_content",
         )
-
         sql, query = vs._fulltext_scoring_mode_to_sql(
             FullTextScoringMode.BM25, "search terms"
         )
-
         assert sql == "BM25(embeddings, %s)"
         assert query == "text_content:(search terms)"
 
