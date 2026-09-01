@@ -77,6 +77,14 @@ class SingleStoreSemanticCache(BaseCache):
 
             Following arguments pertain to the connection pool:
 
+            connection (singlestoredb.Connection, optional): An existing
+                caller-owned SingleStoreDB connection forwarded to the
+                underlying :class:`SingleStoreVectorStore`. Mutually exclusive
+                with ``connection_pool``.
+            connection_pool (sqlalchemy.pool.Pool, optional): A pre-built
+                SQLAlchemy connection pool forwarded to the underlying
+                :class:`SingleStoreVectorStore`. Mutually exclusive with
+                ``connection``.
             pool_size (int, optional): Determines the number of active connections in
                 the pool. Defaults to 5.
             max_overflow (int, optional): Determines the maximum number of connections

@@ -7,14 +7,15 @@ import json
 import logging
 from typing import Any, Callable, List, Optional
 
-import singlestoredb as s2
 from langchain_core.callbacks.manager import (
     AsyncCallbackManagerForRetrieverRun,
     CallbackManagerForRetrieverRun,
 )
 from langchain_core.documents import Document
 from langchain_core.retrievers import BaseRetriever
-from sqlalchemy.pool import QueuePool
+from singlestore_langchain_core import create_connection_pool
+from singlestoredb.connection import Connection
+from sqlalchemy.pool import Pool
 
 from langchain_singlestore._utils import set_connector_attributes
 
@@ -82,7 +83,7 @@ class SingleStoreSQLDatabaseRetriever(BaseRetriever):
     timeout: float = 30
     row_to_document_fn: Optional[Callable[[dict, int], Document]] = None
     connection_kwargs: dict[str, Any] = {}
-    connection_pool: Optional[QueuePool] = None
+    connection_pool: Optional[Pool] = None
 
     """
     Attributes:
@@ -99,20 +100,35 @@ class SingleStoreSQLDatabaseRetriever(BaseRetriever):
         max_overflow: int = 10,
         timeout: float = 30,
         row_to_document_fn: Optional[Callable[[dict, int], Document]] = None,
+        connection: Optional[Connection] = None,
+        connection_pool: Optional[Pool] = None,
         **kwargs: Any,
     ):
         """Initialize SingleStore SQL Database Retriever.
 
         Args:
             pool_size (int, optional): Determines the number of active connections in
-                the pool. Defaults to 5.
+                the pool. Defaults to 5. Ignored when ``connection`` or
+                ``connection_pool`` is supplied.
             max_overflow (int, optional): Determines the maximum number of connections
-                allowed beyond the pool_size. Defaults to 10.
+                allowed beyond the pool_size. Defaults to 10. Ignored when
+                ``connection`` or ``connection_pool`` is supplied.
             timeout (float, optional): Specifies the maximum wait time in seconds for
-                establishing a connection. Defaults to 30.
+                establishing a connection. Defaults to 30. Ignored when
+                ``connection`` or ``connection_pool`` is supplied.
             row_to_document_fn (callable, optional): Custom function to convert a row
                 to a Document. If None, uses default conversion. The function should
                 accept (row_dict, row_index) and return a Document object.
+            connection (singlestoredb.Connection, optional): An existing
+                caller-owned SingleStoreDB connection. When supplied, every
+                database operation shares this connection through an internal
+                proxy that never closes it. Mutually exclusive with
+                ``connection_pool``.
+            connection_pool (sqlalchemy.pool.Pool, optional): A pre-built
+                SQLAlchemy connection pool to use as-is. Mutually exclusive
+                with ``connection``. When neither is supplied, a default pool
+                is built from ``pool_size``/``max_overflow``/``timeout`` and
+                the connection kwargs described below.
 
             Following arguments pertain to the database connection:
 
@@ -128,7 +144,9 @@ class SingleStoreSQLDatabaseRetriever(BaseRetriever):
             database connection. See singlestoredb documentation for details.
 
         Raises:
-            ValueError: If database connection parameters are missing.
+            ValueError: If no way to reach the database is provided
+                (neither ``connection``, ``connection_pool``, nor any connection
+                kwargs such as ``host``).
         """
         super().__init__()
 
@@ -137,28 +155,19 @@ class SingleStoreSQLDatabaseRetriever(BaseRetriever):
         self.timeout = timeout
         self.row_to_document_fn = row_to_document_fn or self._default_row_to_document
 
-        # Validate connection parameters
-        if not kwargs:
-            raise ValueError(
-                "Database connection parameters must be provided. "
-                "Specify at least 'host' parameter."
-            )
-
         # Connection configuration
         self.connection_kwargs = kwargs
         set_connector_attributes(self.connection_kwargs)
 
         # Create connection pool
-        self.connection_pool = QueuePool(
-            self._get_connection,
-            max_overflow=max_overflow,
+        self.connection_pool = create_connection_pool(
+            connection=connection,
+            connection_pool=connection_pool,
             pool_size=pool_size,
+            max_overflow=max_overflow,
             timeout=timeout,
+            connection_kwargs=self.connection_kwargs,
         )
-
-    def _get_connection(self) -> Any:
-        """Get a connection from the pool."""
-        return s2.connect(**self.connection_kwargs)
 
     @staticmethod
     def _default_row_to_document(row_dict: dict, row_index: int) -> Document:

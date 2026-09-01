@@ -1,7 +1,7 @@
 """Integration tests for SingleStore SQL Database Retriever."""
 
 import json
-from typing import Generator
+from typing import Any, Generator
 from unittest.mock import MagicMock
 
 import pytest
@@ -17,7 +17,7 @@ from tests.integration_tests.conftest import ConnectionParameters
 @pytest.fixture
 def test_connection_params(
     clean_db_connection_parameters: ConnectionParameters,
-) -> Generator[dict[str, str], None, None]:
+) -> Generator[dict[str, Any], None, None]:
     """Build test connection parameters from the docker-based clean database fixture."""
     yield {
         "host": clean_db_connection_parameters.Host,
@@ -30,7 +30,7 @@ def test_connection_params(
 
 @pytest.fixture
 def retriever(
-    test_connection_params: dict[str, str],
+    test_connection_params: dict[str, Any],
 ) -> Generator[SingleStoreSQLDatabaseRetriever, None, None]:  # type: ignore
     """Create a retriever instance for testing."""
     retriever = SingleStoreSQLDatabaseRetriever(
@@ -63,12 +63,13 @@ class TestSingleStoreSQLDatabaseRetrieverIntegration:
     def test_execute_query_with_multiple_rows(
         self,
         retriever: SingleStoreSQLDatabaseRetriever,
-        test_connection_params: dict[str, str],
+        test_connection_params: dict[str, Any],
     ) -> None:
         """Test querying multiple rows and converting to documents."""
         try:
             # Create test table
-            conn = retriever._get_connection()
+            assert retriever.connection_pool is not None
+            conn = retriever.connection_pool.connect()
             cursor = conn.cursor()
             try:
                 # Drop table if exists
@@ -126,7 +127,8 @@ class TestSingleStoreSQLDatabaseRetrieverIntegration:
     ) -> None:
         """Test querying tables with JSON data."""
         try:
-            conn = retriever._get_connection()
+            assert retriever.connection_pool is not None
+            conn = retriever.connection_pool.connect()
             cursor = conn.cursor()
             try:
                 # Drop table if exists
@@ -176,7 +178,8 @@ class TestSingleStoreSQLDatabaseRetrieverIntegration:
     ) -> None:
         """Test querying with empty result."""
         try:
-            conn = retriever._get_connection()
+            assert retriever.connection_pool is not None
+            conn = retriever.connection_pool.connect()
             cursor = conn.cursor()
             try:
                 cursor.execute("DROP TABLE IF EXISTS test_empty")
@@ -215,7 +218,7 @@ class TestSingleStoreSQLDatabaseRetrieverIntegration:
             pytest.skip(f"Database not available: {str(e)}")
 
     def test_custom_row_to_document_function(
-        self, test_connection_params: dict[str, str]
+        self, test_connection_params: dict[str, Any]
     ) -> None:
         """Test using custom row to document function."""
 
@@ -263,7 +266,7 @@ class TestSingleStoreSQLDatabaseRetrieverIntegration:
 class TestSingleStoreSQLDatabaseChainIntegration:
     """Integration tests for SingleStoreSQLDatabaseChain."""
 
-    def test_from_url_and_query(self, test_connection_params: dict[str, str]) -> None:
+    def test_from_url_and_query(self, test_connection_params: dict[str, Any]) -> None:
         """Test creating chain from URL and executing query."""
         try:
             retriever = SingleStoreSQLDatabaseChain.from_url(
@@ -285,7 +288,7 @@ class TestSingleStoreSQLDatabaseChainIntegration:
             pytest.skip(f"Database not available: {str(e)}")
 
     def test_query_to_document_convenience_method(
-        self, test_connection_params: dict[str, str]
+        self, test_connection_params: dict[str, Any]
     ) -> None:
         """Test query_to_document convenience method."""
         try:
@@ -300,7 +303,7 @@ class TestSingleStoreSQLDatabaseChainIntegration:
             pytest.skip(f"Database not available: {str(e)}")
 
     def test_query_to_document_with_limit(
-        self, test_connection_params: dict[str, str]
+        self, test_connection_params: dict[str, Any]
     ) -> None:
         """Test query_to_document applies LIMIT correctly."""
         try:
@@ -313,7 +316,7 @@ class TestSingleStoreSQLDatabaseChainIntegration:
                 **conn_kwargs,
             )
 
-            cursor = retriever._get_connection().cursor()
+            cursor = retriever.connection_pool.connect().cursor()  # type: ignore[union-attr]
             try:
                 # Create test table
                 cursor.execute("DROP TABLE IF EXISTS test_limit")
@@ -343,3 +346,62 @@ class TestSingleStoreSQLDatabaseChainIntegration:
 
         except Exception as e:
             pytest.skip(f"Database not available: {str(e)}")
+
+
+class TestSingleStoreSQLDatabaseRetrieverConnectionModes:
+    """Verify the retriever can be built from a caller-owned connection or pool."""
+
+    def test_retriever_with_shared_connection(
+        self,
+        clean_db_connection_parameters: ConnectionParameters,
+    ) -> None:
+        import singlestoredb
+
+        conn = singlestoredb.connect(
+            host=clean_db_connection_parameters.Host,
+            port=clean_db_connection_parameters.Port,
+            user=clean_db_connection_parameters.User,
+            password=clean_db_connection_parameters.Password,
+            database=clean_db_connection_parameters.Database,
+        )
+        try:
+            retriever = SingleStoreSQLDatabaseRetriever(connection=conn)
+            docs = retriever._get_relevant_documents(
+                "SELECT 1 AS ok", run_manager=MagicMock()
+            )
+            assert docs and "ok: 1" in docs[0].page_content
+            # dispose() must be safe and must not close the caller-owned conn.
+            retriever.close()
+            with conn.cursor() as cur:
+                cur.execute("SELECT 2")
+                assert cur.fetchone()[0] == 2  # type: ignore[index]
+        finally:
+            conn.close()
+
+    def test_retriever_with_shared_connection_pool(
+        self,
+        clean_db_connection_parameters: ConnectionParameters,
+    ) -> None:
+        from singlestore_langchain_core import create_connection_pool
+
+        pool = create_connection_pool(
+            pool_size=2,
+            max_overflow=0,
+            timeout=10,
+            connection_kwargs={
+                "host": clean_db_connection_parameters.Host,
+                "port": clean_db_connection_parameters.Port,
+                "user": clean_db_connection_parameters.User,
+                "password": clean_db_connection_parameters.Password,
+                "database": clean_db_connection_parameters.Database,
+            },
+        )
+        try:
+            retriever = SingleStoreSQLDatabaseRetriever(connection_pool=pool)
+            assert retriever.connection_pool is pool
+            docs = retriever._get_relevant_documents(
+                "SELECT 3 AS three", run_manager=MagicMock()
+            )
+            assert docs and "three: 3" in docs[0].page_content
+        finally:
+            pool.dispose()
