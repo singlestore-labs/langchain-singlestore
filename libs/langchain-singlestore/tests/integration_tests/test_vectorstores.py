@@ -1,6 +1,7 @@
 import math
 import os
 import tempfile
+from contextlib import closing
 from typing import Generator, List, cast
 
 import numpy as np
@@ -8,7 +9,6 @@ import pytest
 from langchain_core.documents import Document
 from langchain_core.embeddings import Embeddings
 from langchain_core.vectorstores import VectorStore
-from langchain_experimental.open_clip import OpenCLIPEmbeddings
 from langchain_tests.integration_tests import VectorStoreIntegrationTests
 
 from langchain_singlestore._utils import (
@@ -475,6 +475,11 @@ class TestSingleStoreVectorStore(VectorStoreIntegrationTests):
     def test_add_image2(
         self, clean_db_connection_parameters: ConnectionParameters
     ) -> None:
+        # Imported locally: langchain-experimental is sunset and importing at
+        # module scope raises a DeprecationWarning during collection even when
+        # this test is deselected.
+        from langchain_experimental.open_clip import OpenCLIPEmbeddings
+
         docsearch = SingleStoreVectorStore(
             OpenCLIPEmbeddings(
                 model=None,
@@ -898,9 +903,9 @@ class TestSingleStoreVectorStore(VectorStoreIntegrationTests):
         self, vectorestore_incremental: SingleStoreVectorStore
     ) -> None:
         """Test that full-text index is created when use_full_text_search is True."""
-        conn = vectorestore_incremental._get_connection()
+        conn = vectorestore_incremental.connection_pool.connect()
 
-        with conn.cursor() as cur:
+        with closing(conn.cursor()) as cur:
             cur.execute("SHOW CREATE TABLE embeddings")
             result = cur.fetchone()
             assert result is not None
@@ -940,9 +945,9 @@ class TestSingleStoreVectorStore(VectorStoreIntegrationTests):
             full_text_index_version=full_text_index_version,
         )
         try:
-            conn = docsearch._get_connection()
+            conn = docsearch.connection_pool.connect()
 
-            with conn.cursor() as cur:
+            with closing(conn.cursor()) as cur:
                 cur.execute("SHOW CREATE TABLE embeddings")
                 result = cur.fetchone()
                 assert result is not None

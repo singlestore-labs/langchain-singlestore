@@ -13,7 +13,7 @@ from tests.integration_tests.conftest import ConnectionParameters
 
 
 def create_llm_string(llm: BaseLLM) -> str:
-    _dict: Dict = llm.dict()
+    _dict: Dict = llm.asdict()
     _dict["stop"] = None
     return str(sorted([(k, v) for k, v in _dict.items()]))
 

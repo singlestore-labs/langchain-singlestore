@@ -201,7 +201,12 @@ class SingleStoreSemanticCache(BaseCache):
                     and llm_cache.distance_strategy
                     == DistanceStrategy.EUCLIDEAN_DISTANCE
                 ):
-                    generations.extend(loads(document_score[0].metadata["return_val"]))
+                    generations.extend(
+                        loads(
+                            document_score[0].metadata["return_val"],
+                            allowed_objects="core",
+                        )
+                    )
         return generations if generations else None
 
     def update(self, prompt: str, llm_string: str, return_val: RETURN_VAL_TYPE) -> None:

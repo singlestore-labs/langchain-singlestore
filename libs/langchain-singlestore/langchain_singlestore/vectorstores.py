@@ -18,11 +18,12 @@ from typing import (
     Union,
 )
 
-import singlestoredb as s2
 from langchain_core.documents import Document
 from langchain_core.embeddings import Embeddings
 from langchain_core.vectorstores import VectorStore, VectorStoreRetriever
-from sqlalchemy.pool import QueuePool
+from singlestore_langchain_core import create_connection_pool
+from singlestoredb.connection import Connection
+from sqlalchemy.pool import Pool
 
 from langchain_singlestore._filter import FilterTypedDict, _parse_filter
 from langchain_singlestore._utils import (
@@ -153,9 +154,6 @@ class SingleStoreVectorStore(VectorStore):
         FILTER_BY_VECTOR = "FILTER_BY_VECTOR"
         WEIGHTED_SUM = "WEIGHTED_SUM"
 
-    def _get_connection(self: SingleStoreVectorStore) -> Any:
-        return s2.connect(**self.connection_kwargs)
-
     def __init__(
         self,
         embedding: Embeddings,
@@ -172,10 +170,12 @@ class SingleStoreVectorStore(VectorStore):
         vector_size: int = 1536,
         use_full_text_search: bool = False,
         full_text_index_version: FullTextIndexVersion = DEFAULT_FULL_TEXT_INDEX_VERSION,
+        connection: Optional[Connection] = None,
+        connection_pool: Optional[Pool] = None,
         pool_size: int = 5,
         max_overflow: int = 10,
         timeout: float = 30,
-        **kwargs: Any,
+        **connection_kwargs: Any,
     ):
         """Initialize with necessary components.
 
@@ -418,17 +418,19 @@ class SingleStoreVectorStore(VectorStore):
         self.full_text_index_version = full_text_index_version
 
         # Pass the rest of the kwargs to the connection.
-        self.connection_kwargs = kwargs
+        self.connection_kwargs = connection_kwargs
 
         # Add connection attributes to the connection kwargs.
         set_connector_attributes(self.connection_kwargs)
 
         # Create connection pool.
-        self.connection_pool = QueuePool(
-            self._get_connection,
-            max_overflow=max_overflow,
+        self.connection_pool = create_connection_pool(
+            connection=connection,
+            connection_pool=connection_pool,
             pool_size=pool_size,
+            max_overflow=max_overflow,
             timeout=timeout,
+            connection_kwargs=self.connection_kwargs,
         )
         self._create_table()
 
