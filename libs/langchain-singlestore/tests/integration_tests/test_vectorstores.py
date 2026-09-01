@@ -1111,3 +1111,120 @@ class TestSingleStoreVectorStore(VectorStoreIntegrationTests):
             assert "가뭄이 든 사막에 갑작스러운" in text_results[0].page_content
         finally:
             docsearch.drop()
+
+
+class TestSingleStoreVectorStoreConnectionOptions:
+    """Integration tests for the ``connection`` and ``connection_pool`` kwargs."""
+
+    def test_from_existing_connection(
+        self, clean_db_connection_parameters: ConnectionParameters
+    ) -> None:
+        """A caller-supplied singlestoredb connection is reused and never closed."""
+        from singlestoredb import connect
+
+        conn = connect(
+            host=clean_db_connection_parameters.Host,
+            port=clean_db_connection_parameters.Port,
+            user=clean_db_connection_parameters.User,
+            password=clean_db_connection_parameters.Password,
+            database=clean_db_connection_parameters.Database,
+        )
+        try:
+            docsearch = SingleStoreVectorStore(
+                embedding=IncrementalEmbeddings(),
+                connection=conn,
+            )
+            try:
+                docsearch.add_texts(["alpha", "beta", "gamma"])
+                results = docsearch.similarity_search("alpha", k=1)
+                assert len(results) == 1
+
+                # The vector store must not have closed the caller-owned connection.
+                with closing(conn.cursor()) as cur:
+                    cur.execute("SELECT COUNT(*) FROM embeddings")
+                    row = cur.fetchone()
+                    assert row is not None
+                    assert list(row)[0] == 3
+            finally:
+                docsearch.drop()
+        finally:
+            conn.close()
+
+    def test_from_existing_connection_pool(
+        self, clean_db_connection_parameters: ConnectionParameters
+    ) -> None:
+        """A caller-supplied connection pool is used as-is by the vector store."""
+        from singlestore_langchain_core import create_connection_pool
+
+        pool = create_connection_pool(
+            pool_size=2,
+            max_overflow=1,
+            timeout=10,
+            connection_kwargs={
+                "host": clean_db_connection_parameters.Host,
+                "port": clean_db_connection_parameters.Port,
+                "user": clean_db_connection_parameters.User,
+                "password": clean_db_connection_parameters.Password,
+                "database": clean_db_connection_parameters.Database,
+            },
+        )
+        try:
+            docsearch = SingleStoreVectorStore(
+                embedding=IncrementalEmbeddings(),
+                connection_pool=pool,
+            )
+            # The vector store must adopt the exact pool instance passed in.
+            assert docsearch.connection_pool is pool
+            try:
+                docsearch.add_texts(["one", "two", "three"])
+                results = docsearch.similarity_search("one", k=2)
+                assert len(results) == 2
+
+                # The pool is still usable for direct queries after vector-store ops.
+                proxy = pool.connect()
+                try:
+                    with closing(proxy.cursor()) as cur:
+                        cur.execute("SELECT COUNT(*) FROM embeddings")
+                        row = cur.fetchone()
+                        assert row is not None
+                        assert list(row)[0] == 3
+                finally:
+                    proxy.close()
+            finally:
+                docsearch.drop()
+        finally:
+            pool.dispose()
+
+    def test_connection_and_connection_pool_are_mutually_exclusive(
+        self, clean_db_connection_parameters: ConnectionParameters
+    ) -> None:
+        """Passing both ``connection`` and ``connection_pool`` must fail loudly."""
+        from singlestore_langchain_core import create_connection_pool
+        from singlestoredb import connect
+
+        conn = connect(
+            host=clean_db_connection_parameters.Host,
+            port=clean_db_connection_parameters.Port,
+            user=clean_db_connection_parameters.User,
+            password=clean_db_connection_parameters.Password,
+            database=clean_db_connection_parameters.Database,
+        )
+        pool = create_connection_pool(
+            connection_kwargs={
+                "host": clean_db_connection_parameters.Host,
+                "port": clean_db_connection_parameters.Port,
+                "user": clean_db_connection_parameters.User,
+                "password": clean_db_connection_parameters.Password,
+                "database": clean_db_connection_parameters.Database,
+            }
+        )
+        try:
+            with pytest.raises(ValueError, match="Cannot specify both"):
+                SingleStoreVectorStore(
+                    embedding=IncrementalEmbeddings(),
+                    connection=conn,
+                    connection_pool=pool,
+                )
+        finally:
+            pool.dispose()
+            conn.close()
