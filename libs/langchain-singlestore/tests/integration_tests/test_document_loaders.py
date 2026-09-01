@@ -1,5 +1,6 @@
 from langchain_core.documents import Document
 from langchain_core.embeddings.fake import FakeEmbeddings
+from singlestore_langchain_core._connection import CallerOwnedConnectionPool
 
 from langchain_singlestore.document_loaders import SingleStoreLoader
 from langchain_singlestore.vectorstores import SingleStoreVectorStore
@@ -93,7 +94,8 @@ def test_singlestore_document_loader_with_shared_pool(clean_db_url: str) -> None
             connection_pool=pool,
             table_name="test_documents_pool",
         )
-        assert loader.connection_pool is pool
+        assert isinstance(loader.connection_pool, CallerOwnedConnectionPool)
+        assert loader.connection_pool._connection_pool is pool
         loaded = list(loader.lazy_load())
         assert len(loaded) == len(documents)
     finally:

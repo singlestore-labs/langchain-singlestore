@@ -10,6 +10,7 @@ from langchain_core.documents import Document
 from langchain_core.embeddings import Embeddings
 from langchain_core.vectorstores import VectorStore
 from langchain_tests.integration_tests import VectorStoreIntegrationTests
+from singlestore_langchain_core._connection import CallerOwnedConnectionPool
 
 from langchain_singlestore._utils import (
     DistanceStrategy,
@@ -1174,7 +1175,8 @@ class TestSingleStoreVectorStoreConnectionOptions:
                 connection_pool=pool,
             )
             # The vector store must adopt the exact pool instance passed in.
-            assert docsearch.connection_pool is pool
+            assert isinstance(docsearch.connection_pool, CallerOwnedConnectionPool)
+            assert docsearch.connection_pool._connection_pool is pool
             try:
                 docsearch.add_texts(["one", "two", "three"])
                 results = docsearch.similarity_search("one", k=2)

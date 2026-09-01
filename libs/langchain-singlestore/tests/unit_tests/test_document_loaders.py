@@ -3,6 +3,7 @@
 import unittest
 from unittest.mock import MagicMock, patch
 
+from singlestore_langchain_core._connection import CallerOwnedConnectionPool
 from sqlalchemy.pool import Pool
 
 from langchain_singlestore.document_loaders import SingleStoreLoader
@@ -87,7 +88,8 @@ class TestSingleStoreLoaderInit(unittest.TestCase):
     def test_connection_pool_is_the_injected_mock(self) -> None:
         pool = MagicMock(spec=Pool)
         loader = SingleStoreLoader(connection_pool=pool)
-        assert loader.connection_pool is pool
+        assert isinstance(loader.connection_pool, CallerOwnedConnectionPool)
+        assert loader.connection_pool._connection_pool is pool
 
 
 class TestSingleStoreLoaderLoad(unittest.TestCase):

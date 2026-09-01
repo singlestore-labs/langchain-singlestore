@@ -6,6 +6,7 @@ from unittest.mock import MagicMock
 
 import pytest
 from langchain_core.documents import Document
+from singlestore_langchain_core._connection import CallerOwnedConnectionPool
 
 from langchain_singlestore.sql_database_retriever import (
     SingleStoreSQLDatabaseChain,
@@ -398,7 +399,8 @@ class TestSingleStoreSQLDatabaseRetrieverConnectionModes:
         )
         try:
             retriever = SingleStoreSQLDatabaseRetriever(connection_pool=pool)
-            assert retriever.connection_pool is pool
+            assert isinstance(retriever.connection_pool, CallerOwnedConnectionPool)
+            assert retriever.connection_pool._connection_pool is pool
             docs = retriever._get_relevant_documents(
                 "SELECT 3 AS three", run_manager=MagicMock()
             )

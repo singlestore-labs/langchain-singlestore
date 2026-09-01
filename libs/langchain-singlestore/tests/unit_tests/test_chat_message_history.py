@@ -4,6 +4,7 @@ import unittest
 from unittest.mock import MagicMock, patch
 
 from langchain_core.messages import AIMessage, HumanMessage
+from singlestore_langchain_core._connection import CallerOwnedConnectionPool
 from sqlalchemy.pool import Pool
 
 from langchain_singlestore.chat_message_history import SingleStoreChatMessageHistory
@@ -75,7 +76,8 @@ class TestSingleStoreChatMessageHistory(unittest.TestCase):
         history = SingleStoreChatMessageHistory(
             session_id="test-session", connection_pool=pool
         )
-        assert history.connection_pool is pool
+        assert isinstance(history.connection_pool, CallerOwnedConnectionPool)
+        assert history.connection_pool._connection_pool is pool
 
     def test_table_created_flag_initialized_false(self) -> None:
         history = _make_history()

@@ -3,6 +3,7 @@
 from unittest.mock import MagicMock, patch
 
 from langchain_core.documents import Document
+from singlestore_langchain_core._connection import CallerOwnedConnectionPool
 from sqlalchemy.pool import Pool
 
 from langchain_singlestore.sql_database_retriever import (
@@ -65,7 +66,8 @@ class TestSingleStoreSQLDatabaseRetriever:
     def test_initialization_uses_injected_pool(self) -> None:
         pool = MagicMock(spec=Pool)
         retriever = SingleStoreSQLDatabaseRetriever(connection_pool=pool)
-        assert retriever.connection_pool is pool
+        assert isinstance(retriever.connection_pool, CallerOwnedConnectionPool)
+        assert retriever.connection_pool._connection_pool is pool
 
     def test_initialization_with_custom_row_to_document_fn(self) -> None:
         def custom_converter(row_dict: dict, row_index: int) -> Document:
@@ -174,11 +176,23 @@ class TestSingleStoreSQLDatabaseRetriever:
         assert docs[0].page_content == "Custom-Alice"
         assert docs[0].metadata["custom"] is True
 
-    def test_close_connection_pool(self) -> None:
+    def test_close_does_not_dispose_caller_owned_pool(self) -> None:
         pool = MagicMock(spec=Pool)
         retriever = SingleStoreSQLDatabaseRetriever(connection_pool=pool)
         retriever.close()
-        pool.dispose.assert_called_once()
+        # The caller owns the pool passed in via ``connection_pool``; it must
+        # survive ``retriever.close()``.
+        pool.dispose.assert_not_called()
+
+    def test_close_disposes_default_pool(self) -> None:
+        with patch(
+            "langchain_singlestore.sql_database_retriever.create_connection_pool"
+        ) as mock_factory:
+            managed_pool = MagicMock(spec=Pool)
+            mock_factory.return_value = managed_pool
+            retriever = SingleStoreSQLDatabaseRetriever(host="localhost:3306/db")
+            retriever.close()
+            managed_pool.dispose.assert_called_once()
 
 
 class TestSingleStoreSQLDatabaseChain:

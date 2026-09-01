@@ -1,6 +1,6 @@
 """Connection-pool utilities for SingleStore integrations.
 
-Two SQLAlchemy ``Pool`` implementations are provided:
+Three SQLAlchemy ``Pool`` implementations are provided:
 
 * :class:`SingleConnectionPool` — always hands out the same, caller-owned
   connection. Useful when the caller manages the connection lifecycle itself
@@ -8,6 +8,9 @@ Two SQLAlchemy ``Pool`` implementations are provided:
 * :class:`QueueConnectionPool` — a thin wrapper around
   :class:`sqlalchemy.pool.QueuePool` that lazily opens
   :func:`singlestoredb.connect` connections using a stored kwargs mapping.
+* :class:`CallerOwnedConnectionPool` — delegates to a pool supplied by the
+  caller and treats :meth:`dispose` as a no-op, so the caller keeps ownership
+  of the wrapped pool's lifecycle.
 
 Use :func:`create_connection_pool` as the single entry point; it picks the
 right implementation based on the arguments the caller supplied.
@@ -115,6 +118,26 @@ class QueueConnectionPool(Pool):
         self._pool.dispose()
 
 
+class CallerOwnedConnectionPool(Pool):
+    """Pool wrapper that delegates to a caller-owned pool without disposing it.
+
+    Forwards :meth:`connect` to the wrapped pool but treats :meth:`dispose`
+    as a no-op, so the caller keeps full ownership of the pool's lifecycle.
+    This mirrors the semantics of :class:`_CallerOwnedConnection` at the pool
+    level.
+    """
+
+    def __init__(self, connection_pool: Pool) -> None:
+        self._connection_pool = connection_pool
+
+    def connect(self) -> Any:  # type: ignore[override]
+        return self._connection_pool.connect()
+
+    def dispose(self) -> None:  # type: ignore[override]
+        # Caller owns the wrapped pool; nothing to release here.
+        return None
+
+
 def create_connection_pool(
     connection: Optional[Connection] = None,
     connection_pool: Optional[Pool] = None,
@@ -130,7 +153,9 @@ def create_connection_pool(
     1. If both ``connection`` and ``connection_pool`` are given, raise
        :class:`ValueError` — the caller must pick one.
     2. If ``connection`` is given, wrap it in a :class:`SingleConnectionPool`.
-    3. If ``connection_pool`` is given, return it unchanged.
+    3. If ``connection_pool`` is given, wrap it in a
+       :class:`CallerOwnedConnectionPool` so ``dispose()`` on the returned
+       pool doesn't tear down the caller's pool.
     4. Otherwise build a :class:`QueueConnectionPool` from ``pool_size``,
        ``max_overflow``, ``timeout`` and ``connection_kwargs``.
 
@@ -144,7 +169,7 @@ def create_connection_pool(
         return SingleConnectionPool(connection)
 
     if connection_pool is not None:
-        return connection_pool
+        return CallerOwnedConnectionPool(connection_pool)
 
     return QueueConnectionPool(
         pool_size=pool_size,

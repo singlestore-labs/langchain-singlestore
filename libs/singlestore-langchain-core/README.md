@@ -157,8 +157,11 @@ integrations) always win over environment variables.
 ### Bring your own pool
 
 Pass any object that satisfies the SQLAlchemy `Pool` contract — a raw
-`QueuePool`, a `StaticPool`, or a custom subclass. The factory returns it
-unchanged so integrations pick it up as-is:
+`QueuePool`, a `StaticPool`, or a custom subclass. The factory wraps it in a
+`CallerOwnedConnectionPool` that forwards `connect()` calls to the wrapped
+pool but treats `dispose()` as a no-op, so integration code can safely call
+`pool.dispose()` on shutdown without tearing down a pool the caller still
+owns:
 
 ```python
 from sqlalchemy.pool import StaticPool
@@ -166,6 +169,9 @@ from singlestore_langchain_core import create_connection_pool
 
 my_pool = StaticPool(creator=lambda: singlestoredb.connect(...))
 pool = create_connection_pool(connection_pool=my_pool)
-assert pool is my_pool
+
+pool.connect()   # -> checks out from my_pool
+pool.dispose()   # -> no-op; my_pool is left untouched
+my_pool.dispose()  # caller decides when to tear the real pool down
 ```
 

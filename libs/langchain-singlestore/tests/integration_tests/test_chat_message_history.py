@@ -1,6 +1,7 @@
 import json
 
 from langchain_core.messages import AIMessage, HumanMessage, message_to_dict
+from singlestore_langchain_core._connection import CallerOwnedConnectionPool
 
 from langchain_singlestore import SingleStoreChatMessageHistory
 from tests.integration_tests.conftest import ConnectionParameters
@@ -94,8 +95,10 @@ def test_message_history_with_shared_connection_pool(
     try:
         h1 = SingleStoreChatMessageHistory(session_id="s1", connection_pool=pool)
         h2 = SingleStoreChatMessageHistory(session_id="s2", connection_pool=pool)
-        assert h1.connection_pool is pool
-        assert h2.connection_pool is pool
+        assert isinstance(h1.connection_pool, CallerOwnedConnectionPool)
+        assert isinstance(h2.connection_pool, CallerOwnedConnectionPool)
+        assert h1.connection_pool._connection_pool is pool
+        assert h2.connection_pool._connection_pool is pool
 
         h1.add_message(AIMessage(content="one"))
         h2.add_message(HumanMessage(content="two"))
