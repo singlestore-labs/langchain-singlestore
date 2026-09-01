@@ -1,12 +1,13 @@
 """SingleStore document loader."""
 
 import re
-from typing import Any, Iterator
+from typing import Any, Iterator, Optional
 
-import singlestoredb as s2
 from langchain_core.document_loaders.base import BaseLoader
 from langchain_core.documents import Document
-from sqlalchemy.pool import QueuePool
+from singlestore_langchain_core import create_connection_pool
+from singlestoredb.connection import Connection
+from sqlalchemy.pool import Pool
 
 from langchain_singlestore._utils import set_connector_attributes
 
@@ -59,6 +60,8 @@ class SingleStoreLoader(BaseLoader):
         content_field: str = "content",
         metadata_field: str = "metadata",
         id_field: str = "id",
+        connection: Optional[Connection] = None,
+        connection_pool: Optional[Pool] = None,
         pool_size: int = 5,
         max_overflow: int = 10,
         timeout: float = 30,
@@ -78,12 +81,25 @@ class SingleStoreLoader(BaseLoader):
 
             Following arguments pertain to the connection pool:
 
+            connection (singlestoredb.Connection, optional): An existing
+                caller-owned SingleStoreDB connection. When supplied, every
+                database operation shares this connection through an internal
+                proxy that never closes it. Mutually exclusive with
+                ``connection_pool``.
+            connection_pool (sqlalchemy.pool.Pool, optional): A pre-built
+                SQLAlchemy connection pool to use as-is. Mutually exclusive
+                with ``connection``. When neither is supplied, a default pool
+                is built from ``pool_size``/``max_overflow``/``timeout`` and
+                the connection kwargs described below.
             pool_size (int, optional): Determines the number of active connections in
-                the pool. Defaults to 5.
+                the pool. Defaults to 5. Ignored when ``connection`` or
+                ``connection_pool`` is supplied.
             max_overflow (int, optional): Determines the maximum number of connections
-                allowed beyond the pool_size. Defaults to 10.
+                allowed beyond the pool_size. Defaults to 10. Ignored when
+                ``connection`` or ``connection_pool`` is supplied.
             timeout (float, optional): Specifies the maximum wait time in seconds for
-                establishing a connection. Defaults to 30.
+                establishing a connection. Defaults to 30. Ignored when
+                ``connection`` or ``connection_pool`` is supplied.
 
             Following arguments pertain to the database connection:
 
@@ -140,15 +156,14 @@ class SingleStoreLoader(BaseLoader):
         set_connector_attributes(self.connection_kwargs)
 
         # Create connection pool.
-        self.connection_pool = QueuePool(
-            self._get_connection,
-            max_overflow=max_overflow,
+        self.connection_pool = create_connection_pool(
+            connection=connection,
+            connection_pool=connection_pool,
             pool_size=pool_size,
+            max_overflow=max_overflow,
             timeout=timeout,
+            connection_kwargs=self.connection_kwargs,
         )
-
-    def _get_connection(self) -> Any:
-        return s2.connect(**self.connection_kwargs)
 
     def _sanitize_input(self, input_str: str) -> str:
         # Remove characters that are not alphanumeric or underscores

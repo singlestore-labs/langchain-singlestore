@@ -18,11 +18,12 @@ from typing import (
     Union,
 )
 
-import singlestoredb as s2
 from langchain_core.documents import Document
 from langchain_core.embeddings import Embeddings
 from langchain_core.vectorstores import VectorStore, VectorStoreRetriever
-from sqlalchemy.pool import QueuePool
+from singlestore_langchain_core import create_connection_pool
+from singlestoredb.connection import Connection
+from sqlalchemy.pool import Pool
 
 from langchain_singlestore._filter import FilterTypedDict, _parse_filter
 from langchain_singlestore._utils import (
@@ -153,9 +154,6 @@ class SingleStoreVectorStore(VectorStore):
         FILTER_BY_VECTOR = "FILTER_BY_VECTOR"
         WEIGHTED_SUM = "WEIGHTED_SUM"
 
-    def _get_connection(self: SingleStoreVectorStore) -> Any:
-        return s2.connect(**self.connection_kwargs)
-
     def __init__(
         self,
         embedding: Embeddings,
@@ -172,10 +170,12 @@ class SingleStoreVectorStore(VectorStore):
         vector_size: int = 1536,
         use_full_text_search: bool = False,
         full_text_index_version: FullTextIndexVersion = DEFAULT_FULL_TEXT_INDEX_VERSION,
+        connection: Optional[Connection] = None,
+        connection_pool: Optional[Pool] = None,
         pool_size: int = 5,
         max_overflow: int = 10,
         timeout: float = 30,
-        **kwargs: Any,
+        **connection_kwargs: Any,
     ):
         """Initialize with necessary components.
 
@@ -260,14 +260,35 @@ class SingleStoreVectorStore(VectorStore):
 
             Following arguments pertain to the connection pool:
 
+            connection (singlestoredb.Connection, optional): An existing
+                caller-owned SingleStoreDB connection. When supplied, every
+                database operation shares this connection through an internal
+                proxy that never closes it; the caller keeps full ownership of
+                the connection lifecycle. Mutually exclusive with
+                ``connection_pool``.
+
+            connection_pool (sqlalchemy.pool.Pool, optional): A pre-built
+                SQLAlchemy connection pool to use as-is. Useful when the
+                surrounding application already manages its own pool (custom
+                pool class, shared pool across components, etc.). Mutually
+                exclusive with ``connection``.
+
+                When neither ``connection`` nor ``connection_pool`` is passed,
+                a default :class:`QueueConnectionPool` is built from
+                ``pool_size``, ``max_overflow``, ``timeout``, and the
+                connection kwargs described below.
+
             pool_size (int, optional): Determines the number of active connections in
-                the pool. Defaults to 5.
+                the pool. Defaults to 5. Ignored if ``connection`` or
+                ``connection_pool`` is supplied.
 
             max_overflow (int, optional): Determines the maximum number of connections
-                allowed beyond the pool_size. Defaults to 10.
+                allowed beyond the pool_size. Defaults to 10. Ignored if
+                ``connection`` or ``connection_pool`` is supplied.
 
             timeout (float, optional): Specifies the maximum wait time in seconds for
-                establishing a connection. Defaults to 30.
+                establishing a connection. Defaults to 30. Ignored if
+                ``connection`` or ``connection_pool`` is supplied.
 
 
             Following arguments pertain to the database connection:
@@ -398,6 +419,47 @@ class SingleStoreVectorStore(VectorStore):
                     OpenAIEmbeddings(),
                     use_full_text_search=True,
                 )
+
+            Sharing a caller-owned connection:
+
+            .. code-block:: python
+
+                import singlestoredb
+                from langchain_openai import OpenAIEmbeddings
+                from langchain_singlestore import SingleStoreVectorStore
+
+                conn = singlestoredb.connect(
+                    "me:p455w0rd@s2-host.com/my_db"
+                )
+                vectorstore = SingleStoreVectorStore(
+                    OpenAIEmbeddings(),
+                    connection=conn,
+                )
+                # The vector store never closes ``conn``; the caller does.
+
+            Using a custom connection pool:
+
+            .. code-block:: python
+
+                from singlestore_langchain_core import create_connection_pool
+                from langchain_openai import OpenAIEmbeddings
+                from langchain_singlestore import SingleStoreVectorStore
+
+                pool = create_connection_pool(
+                    pool_size=10,
+                    max_overflow=20,
+                    timeout=60,
+                    connection_kwargs={
+                        "host": "s2-host.com",
+                        "user": "me",
+                        "password": "p455w0rd",
+                        "database": "my_db",
+                    },
+                )
+                vectorstore = SingleStoreVectorStore(
+                    OpenAIEmbeddings(),
+                    connection_pool=pool,
+                )
         """
 
         self.embedding = embedding
@@ -418,17 +480,19 @@ class SingleStoreVectorStore(VectorStore):
         self.full_text_index_version = full_text_index_version
 
         # Pass the rest of the kwargs to the connection.
-        self.connection_kwargs = kwargs
+        self.connection_kwargs = connection_kwargs
 
         # Add connection attributes to the connection kwargs.
         set_connector_attributes(self.connection_kwargs)
 
         # Create connection pool.
-        self.connection_pool = QueuePool(
-            self._get_connection,
-            max_overflow=max_overflow,
+        self.connection_pool = create_connection_pool(
+            connection=connection,
+            connection_pool=connection_pool,
             pool_size=pool_size,
+            max_overflow=max_overflow,
             timeout=timeout,
+            connection_kwargs=self.connection_kwargs,
         )
         self._create_table()
 

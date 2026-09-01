@@ -9,7 +9,7 @@ description = "SingleStore checkpoint saver and store for LangGraph"
 authors = []
 readme = "README.md"
 repository = "https://github.com/singlestore-labs/langchain-singlestore"
-license = "MIT"
+license = "Apache-2.0"
 packages = [
     { include = "langgraph" },
 ]

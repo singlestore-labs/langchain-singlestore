@@ -77,6 +77,14 @@ class SingleStoreSemanticCache(BaseCache):
 
             Following arguments pertain to the connection pool:
 
+            connection (singlestoredb.Connection, optional): An existing
+                caller-owned SingleStoreDB connection forwarded to the
+                underlying :class:`SingleStoreVectorStore`. Mutually exclusive
+                with ``connection_pool``.
+            connection_pool (sqlalchemy.pool.Pool, optional): A pre-built
+                SQLAlchemy connection pool forwarded to the underlying
+                :class:`SingleStoreVectorStore`. Mutually exclusive with
+                ``connection``.
             pool_size (int, optional): Determines the number of active connections in
                 the pool. Defaults to 5.
             max_overflow (int, optional): Determines the maximum number of connections
@@ -201,7 +209,12 @@ class SingleStoreSemanticCache(BaseCache):
                     and llm_cache.distance_strategy
                     == DistanceStrategy.EUCLIDEAN_DISTANCE
                 ):
-                    generations.extend(loads(document_score[0].metadata["return_val"]))
+                    generations.extend(
+                        loads(
+                            document_score[0].metadata["return_val"],
+                            allowed_objects="core",
+                        )
+                    )
         return generations if generations else None
 
     def update(self, prompt: str, llm_string: str, return_val: RETURN_VAL_TYPE) -> None:

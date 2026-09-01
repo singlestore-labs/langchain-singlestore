@@ -13,7 +13,7 @@ from tests.integration_tests.conftest import ConnectionParameters
 
 
 def create_llm_string(llm: BaseLLM) -> str:
-    _dict: Dict = llm.dict()
+    _dict: Dict = llm.asdict()
     _dict["stop"] = None
     return str(sorted([(k, v) for k, v in _dict.items()]))
 
@@ -47,3 +47,40 @@ def test_singlestoredb_semantic_cache(
             "The cache not set. This should never happen, as the pytest fixture "
             "`set_cache_and_teardown` always sets the cache."
         )
+
+
+def test_singlestoredb_semantic_cache_with_shared_connection_pool(
+    clean_db_connection_parameters: ConnectionParameters,
+) -> None:
+    """The cache forwards ``connection_pool`` to its underlying vector store."""
+    from singlestore_langchain_core import create_connection_pool
+
+    pool = create_connection_pool(
+        pool_size=2,
+        max_overflow=0,
+        timeout=10,
+        connection_kwargs={
+            "host": clean_db_connection_parameters.Host,
+            "port": clean_db_connection_parameters.Port,
+            "user": clean_db_connection_parameters.User,
+            "password": clean_db_connection_parameters.Password,
+            "database": clean_db_connection_parameters.Database,
+        },
+    )
+    prompt = "How are you?"
+    cached_response = "Cached test response"
+    try:
+        cache = SingleStoreSemanticCache(
+            DeterministicFakeEmbedding(size=10),
+            connection_pool=pool,
+        )
+        set_llm_cache(cache)
+        llm = FakeListLLM(responses=["Test response"])
+        cache.update(
+            prompt=prompt,
+            llm_string=create_llm_string(llm),
+            return_val=[Generation(text=cached_response)],
+        )
+        assert llm.invoke(prompt) == cached_response
+    finally:
+        pool.dispose()

@@ -7,6 +7,7 @@ import pytest
 from sqlalchemy.pool import Pool, QueuePool
 
 from singlestore_langchain_core._connection import (
+    CallerOwnedConnectionPool,
     QueueConnectionPool,
     SingleConnectionPool,
     create_connection_pool,
@@ -119,6 +120,29 @@ class TestDefaultConnectionPool(unittest.TestCase):
             mock_dispose.assert_called_once_with()
 
 
+class TestCallerOwnedConnectionPool(unittest.TestCase):
+    def test_connect_delegates_to_wrapped_pool(self) -> None:
+        inner = MagicMock(spec=Pool)
+        wrapper = CallerOwnedConnectionPool(inner)
+        result = wrapper.connect()
+        inner.connect.assert_called_once_with()
+        assert result is inner.connect.return_value
+
+    def test_dispose_does_not_touch_wrapped_pool(self) -> None:
+        inner = MagicMock(spec=Pool)
+        wrapper = CallerOwnedConnectionPool(inner)
+        wrapper.dispose()
+        inner.dispose.assert_not_called()
+
+    def test_is_pool_subclass(self) -> None:
+        assert isinstance(CallerOwnedConnectionPool(MagicMock(spec=Pool)), Pool)
+
+    def test_wrapped_pool_exposed_via_private_attribute(self) -> None:
+        inner = MagicMock(spec=Pool)
+        wrapper = CallerOwnedConnectionPool(inner)
+        assert wrapper._connection_pool is inner
+
+
 class TestCreateConnectionPool(unittest.TestCase):
     def test_raises_when_both_connection_and_pool_provided(self) -> None:
         conn = MagicMock(name="connection")
@@ -133,10 +157,18 @@ class TestCreateConnectionPool(unittest.TestCase):
         # Proxy forwards to the wrapped connection.
         assert pool.connect().cursor() is conn.cursor.return_value
 
-    def test_returns_provided_pool_as_is(self) -> None:
+    def test_wraps_provided_pool_in_caller_owned_wrapper(self) -> None:
         provided_pool = MagicMock(spec=Pool)
         result = create_connection_pool(connection_pool=provided_pool)
-        assert result is provided_pool
+        assert isinstance(result, CallerOwnedConnectionPool)
+        assert result._connection_pool is provided_pool
+
+        # connect() delegates to the wrapped pool ...
+        result.connect()
+        provided_pool.connect.assert_called_once_with()
+        # ... but dispose() must not touch the caller-owned pool.
+        result.dispose()
+        provided_pool.dispose.assert_not_called()
 
     def test_returns_default_pool_with_no_arguments(self) -> None:
         pool = create_connection_pool()

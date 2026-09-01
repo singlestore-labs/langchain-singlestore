@@ -9,6 +9,7 @@ from typing import Any
 from sqlalchemy.pool import QueuePool
 
 from singlestore_langchain_core._connection import (
+    CallerOwnedConnectionPool,
     QueueConnectionPool,
     SingleConnectionPool,
     create_connection_pool,
@@ -127,14 +128,25 @@ class TestDefaultConnectionPoolIntegration:
 
 
 class TestCreateConnectionPoolIntegration:
-    def test_forwards_provided_pool(
+    def test_wraps_provided_pool_without_disposing_it(
         self, connection_parameters: ConnectionParameters
     ) -> None:
         inner = QueueConnectionPool(connection_kwargs=connection_parameters.as_kwargs())
         result = create_connection_pool(connection_pool=inner)
-        assert result is inner
+        assert isinstance(result, CallerOwnedConnectionPool)
+        assert result._connection_pool is inner
+
         proxy = result.connect()
         try:
             assert _fetch_one(proxy)[0] == 1
         finally:
             proxy.close()
+
+        # dispose() on the wrapper must not tear down the caller's pool.
+        result.dispose()
+        proxy = inner.connect()
+        try:
+            assert _fetch_one(proxy)[0] == 1
+        finally:
+            proxy.close()
+            inner.dispose()

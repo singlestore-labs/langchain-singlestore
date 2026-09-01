@@ -24,6 +24,9 @@ jobs:
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
+        with:
+          # Full history + tags so we can look up the latest core release tag.
+          fetch-depth: 0
 
       - name: Resolve package + version from tag
         id: pkg
@@ -72,8 +75,13 @@ jobs:
         if: steps.pkg.outputs.name != 'singlestore-langchain-core'
         working-directory: libs/${{ steps.pkg.outputs.name }}
         run: |
-          CORE_VERSION=$(grep -m1 '^version' ../singlestore-langchain-core/pyproject.toml | sed -E 's/version = "(.*)"/\1/')
-          echo "Pinning singlestore-langchain-core to ^$CORE_VERSION"
+          CORE_TAG=$(git tag --list 'singlestore-langchain-core-v*.*.*' --sort=-v:refname | head -n1)
+          if [[ -z "$CORE_TAG" ]]; then
+            echo "No singlestore-langchain-core-v* tag found; cannot pin core version" >&2
+            exit 1
+          fi
+          CORE_VERSION="${CORE_TAG#singlestore-langchain-core-v}"
+          echo "Pinning singlestore-langchain-core to ^$CORE_VERSION (from tag $CORE_TAG)"
           sed -i "s|singlestore-langchain-core = { path = \"../singlestore-langchain-core\", develop = true }|singlestore-langchain-core = \"^${CORE_VERSION}\"|" pyproject.toml
 
       # ``poetry build`` reads pyproject.toml directly and does not resolve or
