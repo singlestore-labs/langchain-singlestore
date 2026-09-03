@@ -18,7 +18,7 @@ packages = [{ include = "singlestore_langchain_core" }]
 
 [tool.poetry.dependencies]
 python = ">=3.10,<4.0"
-singlestoredb = "^1.16.9"
+singlestoredb = "^1.17.2"
 sqlalchemy = "^2.0.40"
 
 [tool.mypy]

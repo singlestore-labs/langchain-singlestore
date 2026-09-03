@@ -22,7 +22,7 @@ disallow_untyped_defs = "True"
 [tool.poetry.dependencies]
 python = ">=3.10,<4.0"
 langchain-core = ">=1.2.5,<2.0.0"
-singlestoredb = "^1.16.9"
+singlestoredb = "^1.17.2"
 sqlalchemy = "^2.0.40"
 # Path dep for in-tree development; publish workflow rewrites this to a
 # version constraint (e.g. singlestore-langchain-core = "^0.1.0").
