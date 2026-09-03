@@ -252,7 +252,7 @@ class SingleStoreStore(BaseStore):
                 (_namespace_to_text(namespace), *keys),
             )
 
-        insert_values: list[str] = []
+        insert_values: list[Any] = []
         insert_placeholders: list[str] = []
         for op in inserts:
             insert_values.extend(
@@ -268,16 +268,19 @@ class SingleStoreStore(BaseStore):
                     "(%s, %s, %s, NOW(), NOW(),"
                     + " DATE_ADD(NOW(), INTERVAL %s MINUTE), %s)"
                 )
-                insert_values.extend([f"{ttl_minutes}", f"{ttl_minutes}"])
+                # ``ttl_minutes`` column is INTEGER; bind numerics, not strings,
+                # so strict-mode SingleStore accepts the value.
+                insert_values.extend([ttl_minutes, int(round(ttl_minutes))])
             else:
                 insert_placeholders.append("(%s, %s, %s, NOW(), NOW(), NULL, NULL)")
 
-        cur.execute(
-            _UPSERT_BASE_SQL
-            + ",".join(insert_placeholders)
-            + _ON_DUPLICATE_KEY_UPDATE_SQL,
-            tuple(insert_values),
-        )
+        if insert_placeholders:
+            cur.execute(
+                _UPSERT_BASE_SQL
+                + ",".join(insert_placeholders)
+                + _ON_DUPLICATE_KEY_UPDATE_SQL,
+                tuple(insert_values),
+            )
 
     def _batch_search_ops(
         self,
