@@ -11,7 +11,7 @@ from typing import Any, cast
 import pytest
 from singlestoredb.connection import connect
 
-from langgraph.store.base import GetOp, Item, PutOp
+from langgraph.store.base import GetOp, Item, ListNamespacesOp, MatchCondition, PutOp
 from langgraph.store.singlestore import SingleStoreStore
 
 from .conftest import ConnectionParameters
@@ -622,5 +622,350 @@ class TestSingleStoreStoreGetOp:
             after = _fetch_store_row(connection_parameters, namespace, key)
             assert after is not None and after["expires_at"] is not None
             assert after["expires_at"] > before["expires_at"]
+        finally:
+            store.close()
+
+
+# ---------------------------------------------------------------------------
+# ``ListNamespacesOp``
+# ---------------------------------------------------------------------------
+
+# Fixed seed for ``list_namespaces`` tests. Each entry is a namespace tuple
+# stored with a single dummy key ``k``. Chosen to exercise:
+#   * multiple top-level roots (``users``, ``agents``, ``docs``);
+#   * varying depths (2..4);
+#   * shared suffixes (``prefs``, ``state``);
+#   * shared middle segment (``planner``).
+_LIST_NS_SEED: tuple[tuple[str, ...], ...] = (
+    ("users", "alice", "prefs"),
+    ("users", "alice", "profile"),
+    ("users", "bob", "prefs"),
+    ("users", "carol", "prefs"),
+    ("agents", "planner", "state"),
+    ("agents", "planner", "config"),
+    ("agents", "researcher", "state"),
+    ("docs", "public", "readme"),
+    ("docs", "private", "draft"),
+    ("docs", "private", "notes", "v1"),
+)
+
+
+def _seed_list_namespaces(store: SingleStoreStore) -> None:
+    store.batch([PutOp(ns, "k", {"i": i}) for i, ns in enumerate(_LIST_NS_SEED)])
+
+
+def _list(store: SingleStoreStore, op: ListNamespacesOp) -> list[tuple[str, ...]]:
+    results = store.batch([op])
+    assert len(results) == 1
+    return cast("list[tuple[str, ...]]", results[0])
+
+
+class TestSingleStoreStoreListNamespacesOp:
+    def test_no_conditions_returns_all_distinct_namespaces_sorted(
+        self, connection_parameters: ConnectionParameters
+    ) -> None:
+        store = SingleStoreStore(**connection_parameters.as_kwargs())
+        try:
+            store.setup()
+            _seed_list_namespaces(store)
+
+            got = _list(store, ListNamespacesOp())
+            assert got == sorted(_LIST_NS_SEED)
+        finally:
+            store.close()
+
+    def test_prefix_condition_filters_by_root(
+        self, connection_parameters: ConnectionParameters
+    ) -> None:
+        store = SingleStoreStore(**connection_parameters.as_kwargs())
+        try:
+            store.setup()
+            _seed_list_namespaces(store)
+
+            got = _list(
+                store,
+                ListNamespacesOp(
+                    match_conditions=(
+                        MatchCondition(match_type="prefix", path=("users",)),
+                    )
+                ),
+            )
+            expected = sorted(ns for ns in _LIST_NS_SEED if ns[0] == "users")
+            assert got == expected
+        finally:
+            store.close()
+
+    def test_suffix_condition_filters_by_tail(
+        self, connection_parameters: ConnectionParameters
+    ) -> None:
+        store = SingleStoreStore(**connection_parameters.as_kwargs())
+        try:
+            store.setup()
+            _seed_list_namespaces(store)
+
+            got = _list(
+                store,
+                ListNamespacesOp(
+                    match_conditions=(
+                        MatchCondition(match_type="suffix", path=("prefs",)),
+                    )
+                ),
+            )
+            expected = sorted(ns for ns in _LIST_NS_SEED if ns[-1] == "prefs")
+            assert got == expected
+        finally:
+            store.close()
+
+    def test_prefix_condition_with_wildcard_segment(
+        self, connection_parameters: ConnectionParameters
+    ) -> None:
+        """``("users", "*")`` matches any user + at least one child segment."""
+        store = SingleStoreStore(**connection_parameters.as_kwargs())
+        try:
+            store.setup()
+            _seed_list_namespaces(store)
+
+            got = _list(
+                store,
+                ListNamespacesOp(
+                    match_conditions=(
+                        MatchCondition(match_type="prefix", path=("users", "*")),
+                    )
+                ),
+            )
+            expected = sorted(
+                ns for ns in _LIST_NS_SEED if ns[0] == "users" and len(ns) >= 3
+            )
+            assert got == expected
+        finally:
+            store.close()
+
+    def test_multiple_match_conditions_are_anded(
+        self, connection_parameters: ConnectionParameters
+    ) -> None:
+        """Both conditions must hold — prefix ``docs`` AND suffix ``draft``."""
+        store = SingleStoreStore(**connection_parameters.as_kwargs())
+        try:
+            store.setup()
+            _seed_list_namespaces(store)
+
+            got = _list(
+                store,
+                ListNamespacesOp(
+                    match_conditions=(
+                        MatchCondition(match_type="prefix", path=("docs",)),
+                        MatchCondition(match_type="suffix", path=("draft",)),
+                    )
+                ),
+            )
+            assert got == [("docs", "private", "draft")]
+        finally:
+            store.close()
+
+    def test_multiple_match_conditions_can_yield_empty(
+        self, connection_parameters: ConnectionParameters
+    ) -> None:
+        """Contradictory prefix + suffix must return an empty list, not error."""
+        store = SingleStoreStore(**connection_parameters.as_kwargs())
+        try:
+            store.setup()
+            _seed_list_namespaces(store)
+
+            got = _list(
+                store,
+                ListNamespacesOp(
+                    match_conditions=(
+                        MatchCondition(match_type="prefix", path=("users",)),
+                        MatchCondition(match_type="suffix", path=("readme",)),
+                    )
+                ),
+            )
+            assert got == []
+        finally:
+            store.close()
+
+    def test_max_depth_truncates_and_deduplicates(
+        self, connection_parameters: ConnectionParameters
+    ) -> None:
+        """``max_depth=2`` collapses ``users/alice/prefs`` -> ``users/alice``."""
+        store = SingleStoreStore(**connection_parameters.as_kwargs())
+        try:
+            store.setup()
+            _seed_list_namespaces(store)
+
+            got = _list(store, ListNamespacesOp(max_depth=2))
+            expected = sorted({ns[:2] for ns in _LIST_NS_SEED})
+            assert got == expected
+        finally:
+            store.close()
+
+    def test_max_depth_one_returns_only_roots(
+        self, connection_parameters: ConnectionParameters
+    ) -> None:
+        store = SingleStoreStore(**connection_parameters.as_kwargs())
+        try:
+            store.setup()
+            _seed_list_namespaces(store)
+
+            got = _list(store, ListNamespacesOp(max_depth=1))
+            assert got == [("agents",), ("docs",), ("users",)]
+        finally:
+            store.close()
+
+    def test_max_depth_greater_than_actual_returns_full_namespaces(
+        self, connection_parameters: ConnectionParameters
+    ) -> None:
+        """A ``max_depth`` past the deepest namespace is a no-op truncation."""
+        store = SingleStoreStore(**connection_parameters.as_kwargs())
+        try:
+            store.setup()
+            _seed_list_namespaces(store)
+
+            deepest = max(len(ns) for ns in _LIST_NS_SEED)
+            got = _list(store, ListNamespacesOp(max_depth=deepest + 5))
+            assert got == sorted(_LIST_NS_SEED)
+        finally:
+            store.close()
+
+    def test_max_depth_combines_with_match_conditions(
+        self, connection_parameters: ConnectionParameters
+    ) -> None:
+        """Filter first (via LIKE), then truncate — verify final tuple set."""
+        store = SingleStoreStore(**connection_parameters.as_kwargs())
+        try:
+            store.setup()
+            _seed_list_namespaces(store)
+
+            got = _list(
+                store,
+                ListNamespacesOp(
+                    match_conditions=(
+                        MatchCondition(match_type="prefix", path=("users",)),
+                    ),
+                    max_depth=2,
+                ),
+            )
+            expected = sorted({ns[:2] for ns in _LIST_NS_SEED if ns[0] == "users"})
+            assert got == expected
+        finally:
+            store.close()
+
+    def test_pagination_limit_returns_first_n_in_sort_order(
+        self, connection_parameters: ConnectionParameters
+    ) -> None:
+        store = SingleStoreStore(**connection_parameters.as_kwargs())
+        try:
+            store.setup()
+            _seed_list_namespaces(store)
+
+            all_sorted = sorted(_LIST_NS_SEED)
+            got = _list(store, ListNamespacesOp(limit=3))
+            assert got == all_sorted[:3]
+        finally:
+            store.close()
+
+    def test_pagination_offset_skips_leading_rows(
+        self, connection_parameters: ConnectionParameters
+    ) -> None:
+        store = SingleStoreStore(**connection_parameters.as_kwargs())
+        try:
+            store.setup()
+            _seed_list_namespaces(store)
+
+            all_sorted = sorted(_LIST_NS_SEED)
+            got = _list(store, ListNamespacesOp(offset=3, limit=3))
+            assert got == all_sorted[3:6]
+        finally:
+            store.close()
+
+    def test_pagination_covers_the_full_set_via_pages(
+        self, connection_parameters: ConnectionParameters
+    ) -> None:
+        """Concatenating consecutive pages reproduces the sorted namespace list."""
+        store = SingleStoreStore(**connection_parameters.as_kwargs())
+        try:
+            store.setup()
+            _seed_list_namespaces(store)
+
+            all_sorted = sorted(_LIST_NS_SEED)
+            page_size = 4
+            collected: list[tuple[str, ...]] = []
+            offset = 0
+            while True:
+                page = _list(store, ListNamespacesOp(limit=page_size, offset=offset))
+                if not page:
+                    break
+                collected.extend(page)
+                offset += page_size
+                # Defensive stop — avoids an infinite loop if pagination misbehaves.
+                assert offset <= len(all_sorted) + page_size
+            assert collected == all_sorted
+        finally:
+            store.close()
+
+    def test_pagination_offset_past_end_returns_empty(
+        self, connection_parameters: ConnectionParameters
+    ) -> None:
+        store = SingleStoreStore(**connection_parameters.as_kwargs())
+        try:
+            store.setup()
+            _seed_list_namespaces(store)
+
+            got = _list(
+                store, ListNamespacesOp(offset=len(_LIST_NS_SEED) + 10, limit=5)
+            )
+            assert got == []
+        finally:
+            store.close()
+
+    def test_pagination_applies_after_max_depth_dedup(
+        self, connection_parameters: ConnectionParameters
+    ) -> None:
+        """``max_depth=1`` gives 3 roots; ``offset=1, limit=1`` picks the middle."""
+        store = SingleStoreStore(**connection_parameters.as_kwargs())
+        try:
+            store.setup()
+            _seed_list_namespaces(store)
+
+            got = _list(store, ListNamespacesOp(max_depth=1, offset=1, limit=1))
+            assert got == [("docs",)]
+        finally:
+            store.close()
+
+    def test_expired_rows_are_excluded(
+        self, connection_parameters: ConnectionParameters
+    ) -> None:
+        """Rows whose TTL has elapsed must not surface in ``list_namespaces``."""
+        store = SingleStoreStore(**connection_parameters.as_kwargs())
+        try:
+            store.setup()
+            store.batch(
+                [
+                    PutOp(("users", "alice"), "k", {"i": 0}),
+                    PutOp(("users", "bob"), "k", {"i": 1}, ttl=1.0),
+                ]
+            )
+            # Force the second row past its TTL.
+            conn = connect(**connection_parameters.as_kwargs())
+            try:
+                cur = conn.cursor()
+                cur.execute(
+                    "UPDATE store SET expires_at = DATE_SUB(NOW(), INTERVAL 1 MINUTE) "
+                    "WHERE prefix = %s",
+                    ("users/bob",),
+                )
+                cur.close()
+            finally:
+                conn.close()
+
+            got = _list(
+                store,
+                ListNamespacesOp(
+                    match_conditions=(
+                        MatchCondition(match_type="prefix", path=("users",)),
+                    )
+                ),
+            )
+            assert got == [("users", "alice")]
         finally:
             store.close()

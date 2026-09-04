@@ -62,6 +62,40 @@ MIGRATIONS: Sequence[str] = [
         PRIMARY KEY (prefix(255), `key`(255)),
         INDEX store_prefix_idx (prefix(255))
     );""",
+    # ``truncate_ns_prefix`` slices an escape-encoded prefix at the Nth
+    # *unescaped* "/". Mirrors the Python escape scheme in ``_escape_ns_part``:
+    # an escape char consumes the next character, so ``\/`` inside a part is
+    # not counted as a boundary. Used by ``list_namespaces`` to push
+    # ``max_depth`` truncation into SQL.
+    r"""CREATE OR REPLACE FUNCTION truncate_ns_prefix(
+        prefix TEXT,
+        max_depth INT
+    ) RETURNS TEXT AS
+    DECLARE
+        n INT = CHAR_LENGTH(prefix);
+        i INT = 1;
+        parts_seen INT = 0;
+        ch TEXT;
+    BEGIN
+        IF prefix IS NULL OR max_depth <= 0 OR n = 0 THEN
+            RETURN '';
+        END IF;
+        WHILE i <= n LOOP
+            ch = SUBSTRING(prefix, i, 1);
+            IF ch = '\\' AND i < n THEN
+                i = i + 2;
+            ELSEIF ch = '/' THEN
+                parts_seen = parts_seen + 1;
+                IF parts_seen = max_depth THEN
+                    RETURN SUBSTRING(prefix, 1, i - 1);
+                END IF;
+                i = i + 1;
+            ELSE
+                i = i + 1;
+            END IF;
+        END LOOP;
+        RETURN prefix;
+    END;""",
 ]
 
 # --- SQL fragments -----------------------------------------------------------
@@ -340,32 +374,39 @@ class SingleStoreStore(BaseStore):
             for cond in op.match_conditions or []:
                 if cond.match_type == "prefix":
                     where_clauses.append("prefix LIKE %s")
-                    params.append(_namespace_to_text(cond.path) + "%")
+                    params.append(_namespace_for_prefix_search(cond.path))
                 elif cond.match_type == "suffix":
                     where_clauses.append("prefix LIKE %s")
-                    params.append("%" + _namespace_to_text(cond.path))
+                    params.append(_namespace_for_suffix_search(cond.path))
                 else:  # pragma: no cover - defensive
                     logger.warning(
                         "Unknown match_type in list_namespaces: %s",
                         cond.match_type,
                     )
-            where_sql = f"WHERE {' AND '.join(where_clauses)}" if where_clauses else ""
-            # ``max_depth`` truncates the returned namespace to the first N
-            # dot-separated segments; SingleStore lacks Postgres' unnest, so
-            # we truncate in Python after fetching distinct prefixes.
+            where_sql = (
+                "WHERE (expires_at IS NULL OR expires_at > CURRENT_TIMESTAMP)"
+                + (f" AND {' AND '.join(where_clauses)}" if where_clauses else "")
+            )
+            # ``max_depth`` truncates each returned namespace to the first N
+            # parts. SingleStore lacks Postgres' ``unnest``, so the SQL side
+            # calls the ``truncate_ns_prefix`` UDF (see migrations) which
+            # respects the escape scheme and slices at unescaped ``/``.
+            if op.max_depth is None:
+                select_expr = "prefix"
+                depth_params: tuple[Any, ...] = ()
+            else:
+                select_expr = "truncate_ns_prefix(prefix, %s)"
+                depth_params = (op.max_depth,)
             cur.execute(
-                f"SELECT DISTINCT prefix FROM store {where_sql} "
-                f"ORDER BY prefix LIMIT %s OFFSET %s",
-                (*params, op.limit, op.offset),
+                f"SELECT DISTINCT {select_expr} AS trunc_prefix FROM store "
+                f"{where_sql} ORDER BY trunc_prefix LIMIT %s OFFSET %s",
+                (*depth_params, *params, op.limit, op.offset),
             )
             rows = cur.fetchall()
             seen: dict[tuple[str, ...], None] = {}
             for row in rows:
-                ns = _text_to_namespace(_row_get(row, 0, "prefix"))
-                if op.max_depth is not None:
-                    ns = ns[: op.max_depth]
-                if ns not in seen:
-                    seen[ns] = None
+                ns = _text_to_namespace(_row_get(row, 0, "trunc_prefix"))
+                seen[ns] = None
             results[idx] = list(seen.keys())
 
     # -------------------------------------------------------------- cursor
@@ -411,12 +452,95 @@ def _group_ops(
     return grouped, total
 
 
+# Namespace parts are joined with "/" for storage in the ``prefix`` column.
+# Each part is escaped so joining stays unambiguous *and* so the encoded
+# text can be embedded in a LIKE pattern without wildcards leaking in:
+#   "\" -> "\\"   escape the escape character
+#   "/" -> "\/"   escape the separator
+#   "%" -> "\%"   escape the LIKE multi-char wildcard
+#   "_" -> "\_"   escape the LIKE single-char wildcard
+# ``_namespace_to_text`` is injective, so ``("a/b", "c")`` and
+# ``("a", "b", "c")`` serialize to distinct prefixes.
+_NS_SEPARATOR = "/"
+_NS_ESCAPE = "\\"
+_NS_LIKE_WILDCARD_ANY = "%"
+_NS_LIKE_WILDCARD_ONE = "_"
+_NS_WILDCARD = "*"
+
+
+def _escape_ns_part(part: str) -> str:
+    return (
+        part.replace(_NS_ESCAPE, _NS_ESCAPE * 2)
+        .replace(_NS_SEPARATOR, _NS_ESCAPE + _NS_SEPARATOR)
+        .replace(_NS_LIKE_WILDCARD_ANY, _NS_ESCAPE + _NS_LIKE_WILDCARD_ANY)
+        .replace(_NS_LIKE_WILDCARD_ONE, _NS_ESCAPE + _NS_LIKE_WILDCARD_ONE)
+    )
+
+
+def _unescape_ns_part(part: str) -> str:
+    out: list[str] = []
+    i = 0
+    n = len(part)
+    while i < n:
+        ch = part[i]
+        if ch == _NS_ESCAPE and i + 1 < n:
+            out.append(part[i + 1])
+            i += 2
+        else:
+            out.append(ch)
+            i += 1
+    return "".join(out)
+
+
 def _namespace_to_text(namespace: tuple[str, ...]) -> str:
-    return "/".join(namespace)
+    return _NS_SEPARATOR.join(_escape_ns_part(p) for p in namespace)
+
+
+def _namespace_with_wildcard_for_search(namespace: tuple[str, ...]) -> str:
+    return _NS_SEPARATOR.join(
+        _escape_ns_part(p) if p != _NS_WILDCARD else _NS_LIKE_WILDCARD_ANY
+        for p in namespace
+    )
+
+
+def _namespace_for_prefix_search(namespace: tuple[str, ...]) -> str:
+    return (
+        _namespace_with_wildcard_for_search(namespace)
+        + _NS_SEPARATOR
+        + _NS_LIKE_WILDCARD_ANY
+    )
+
+
+def _namespace_for_suffix_search(namespace: tuple[str, ...]) -> str:
+    return (
+        _NS_LIKE_WILDCARD_ANY
+        + _NS_SEPARATOR
+        + _namespace_with_wildcard_for_search(namespace)
+    )
 
 
 def _text_to_namespace(text: str) -> tuple[str, ...]:
-    return tuple(text.split("/")) if text else ()
+    if not text:
+        return ()
+    parts: list[str] = []
+    buf: list[str] = []
+    i = 0
+    n = len(text)
+    while i < n:
+        ch = text[i]
+        if ch == _NS_ESCAPE and i + 1 < n:
+            buf.append(ch)
+            buf.append(text[i + 1])
+            i += 2
+        elif ch == _NS_SEPARATOR:
+            parts.append(_unescape_ns_part("".join(buf)))
+            buf = []
+            i += 1
+        else:
+            buf.append(ch)
+            i += 1
+    parts.append(_unescape_ns_part("".join(buf)))
+    return tuple(parts)
 
 
 def _search_where(op: SearchOp) -> tuple[str, list[Any]]:
