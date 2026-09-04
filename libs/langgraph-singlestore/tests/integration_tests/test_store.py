@@ -340,3 +340,287 @@ class TestSingleStoreStorePutOp:
             assert third["ttl_minutes"] is None
         finally:
             store.close()
+
+
+class TestSingleStoreStoreGetOp:
+    def test_get_missing_key_returns_none(
+        self, connection_parameters: ConnectionParameters
+    ) -> None:
+        store = SingleStoreStore(**connection_parameters.as_kwargs())
+        try:
+            store.setup()
+            results = store.batch([GetOp(("users", "alice"), "missing")])
+            assert results == [None]
+        finally:
+            store.close()
+
+    def test_get_returns_item_without_ttl(
+        self, connection_parameters: ConnectionParameters
+    ) -> None:
+        store = SingleStoreStore(**connection_parameters.as_kwargs())
+        try:
+            store.setup()
+            namespace = ("users", "alice")
+            key = "prefs"
+            value = {"theme": "dark"}
+            store.batch([PutOp(namespace, key, value)])
+
+            results = store.batch([GetOp(namespace, key, refresh_ttl=False)])
+            item = _as_item(results[0])
+            assert item is not None
+            assert item.namespace == namespace
+            assert item.key == key
+            assert item.value == value
+        finally:
+            store.close()
+
+    def test_get_batches_multiple_keys_across_namespaces(
+        self, connection_parameters: ConnectionParameters
+    ) -> None:
+        """Batch of ``GetOp``s returns each item at the right result index."""
+        store = SingleStoreStore(**connection_parameters.as_kwargs())
+        try:
+            store.setup()
+            store.batch(
+                [
+                    PutOp(("users", "alice"), "prefs", {"theme": "dark"}),
+                    PutOp(("users", "alice"), "profile", {"name": "Alice"}),
+                    PutOp(("users", "bob"), "prefs", {"theme": "light"}),
+                ]
+            )
+
+            ops = [
+                GetOp(("users", "alice"), "prefs", refresh_ttl=False),
+                GetOp(("users", "bob"), "prefs", refresh_ttl=False),
+                GetOp(("users", "alice"), "profile", refresh_ttl=False),
+                GetOp(("users", "carol"), "prefs", refresh_ttl=False),
+            ]
+            results = store.batch(ops)
+            assert len(results) == 4
+
+            item0 = _as_item(results[0])
+            item1 = _as_item(results[1])
+            item2 = _as_item(results[2])
+            assert item0 is not None and item0.value == {"theme": "dark"}
+            assert item1 is not None and item1.value == {"theme": "light"}
+            assert item2 is not None and item2.value == {"name": "Alice"}
+            assert results[3] is None  # missing key stays None
+        finally:
+            store.close()
+
+    def test_get_with_refresh_ttl_true_bumps_expires_at(
+        self, connection_parameters: ConnectionParameters
+    ) -> None:
+        """``GetOp(refresh_ttl=True)`` must push ``expires_at`` forward."""
+        store = SingleStoreStore(**connection_parameters.as_kwargs())
+        try:
+            store.setup()
+            namespace = ("users", "alice")
+            key = "prefs"
+
+            store.batch([PutOp(namespace, key, {"theme": "dark"}, ttl=60.0)])
+            before = _fetch_store_row(connection_parameters, namespace, key)
+            assert before is not None
+            assert before["expires_at"] is not None
+
+            # ``TIMESTAMP`` has 1-second granularity — wait so the refresh
+            # produces an observably later ``expires_at``.
+            time.sleep(1.1)
+
+            results = store.batch([GetOp(namespace, key, refresh_ttl=True)])
+            item = _as_item(results[0])
+            assert item is not None
+            assert item.value == {"theme": "dark"}
+
+            after = _fetch_store_row(connection_parameters, namespace, key)
+            assert after is not None
+            assert after["expires_at"] is not None
+            assert after["expires_at"] > before["expires_at"]
+            # ``ttl_minutes`` is preserved on refresh — only ``expires_at`` moves.
+            assert float(after["ttl_minutes"]) == pytest.approx(
+                float(before["ttl_minutes"])
+            )
+            # The refresh SQL bumps ``updated_at`` alongside ``expires_at``.
+            assert after["updated_at"] >= before["updated_at"]
+            # ``created_at`` is immutable.
+            assert after["created_at"] == before["created_at"]
+        finally:
+            store.close()
+
+    def test_get_with_refresh_ttl_false_leaves_expires_at_unchanged(
+        self, connection_parameters: ConnectionParameters
+    ) -> None:
+        """``GetOp(refresh_ttl=False)`` must NOT modify ``expires_at``."""
+        store = SingleStoreStore(**connection_parameters.as_kwargs())
+        try:
+            store.setup()
+            namespace = ("users", "alice")
+            key = "prefs"
+
+            store.batch([PutOp(namespace, key, {"theme": "dark"}, ttl=60.0)])
+            before = _fetch_store_row(connection_parameters, namespace, key)
+            assert before is not None
+            assert before["expires_at"] is not None
+
+            time.sleep(1.1)
+
+            results = store.batch([GetOp(namespace, key, refresh_ttl=False)])
+            item = _as_item(results[0])
+            assert item is not None
+            assert item.value == {"theme": "dark"}
+
+            after = _fetch_store_row(connection_parameters, namespace, key)
+            assert after is not None
+            assert after["expires_at"] == before["expires_at"]
+            assert after["updated_at"] == before["updated_at"]
+            assert after["created_at"] == before["created_at"]
+            assert float(after["ttl_minutes"]) == pytest.approx(
+                float(before["ttl_minutes"])
+            )
+        finally:
+            store.close()
+
+    def test_get_with_refresh_ttl_true_on_row_without_ttl_is_noop(
+        self, connection_parameters: ConnectionParameters
+    ) -> None:
+        """Refreshing TTL on a row with no TTL must not populate ``expires_at``."""
+        store = SingleStoreStore(**connection_parameters.as_kwargs())
+        try:
+            store.setup()
+            namespace = ("users", "alice")
+            key = "prefs"
+
+            store.batch([PutOp(namespace, key, {"theme": "dark"})])
+            before = _fetch_store_row(connection_parameters, namespace, key)
+            assert before is not None
+            assert before["expires_at"] is None
+            assert before["ttl_minutes"] is None
+
+            time.sleep(1.1)
+
+            results = store.batch([GetOp(namespace, key, refresh_ttl=True)])
+            item = _as_item(results[0])
+            assert item is not None
+
+            after = _fetch_store_row(connection_parameters, namespace, key)
+            assert after is not None
+            assert after["expires_at"] is None
+            assert after["ttl_minutes"] is None
+        finally:
+            store.close()
+
+    def test_get_mixed_refresh_ttl_in_single_batch(
+        self, connection_parameters: ConnectionParameters
+    ) -> None:
+        """Only rows fetched with ``refresh_ttl=True`` are refreshed."""
+        store = SingleStoreStore(**connection_parameters.as_kwargs())
+        try:
+            store.setup()
+            namespace = ("users", "alice")
+            key_refresh = "prefs"
+            key_no_refresh = "profile"
+
+            store.batch(
+                [
+                    PutOp(namespace, key_refresh, {"theme": "dark"}, ttl=60.0),
+                    PutOp(namespace, key_no_refresh, {"name": "Alice"}, ttl=60.0),
+                ]
+            )
+            before_refresh = _fetch_store_row(
+                connection_parameters, namespace, key_refresh
+            )
+            before_no_refresh = _fetch_store_row(
+                connection_parameters, namespace, key_no_refresh
+            )
+            assert before_refresh is not None
+            assert before_refresh["expires_at"] is not None
+            assert before_no_refresh is not None
+            assert before_no_refresh["expires_at"] is not None
+
+            time.sleep(1.1)
+
+            results = store.batch(
+                [
+                    GetOp(namespace, key_refresh, refresh_ttl=True),
+                    GetOp(namespace, key_no_refresh, refresh_ttl=False),
+                ]
+            )
+            assert _as_item(results[0]) is not None
+            assert _as_item(results[1]) is not None
+
+            after_refresh = _fetch_store_row(
+                connection_parameters, namespace, key_refresh
+            )
+            after_no_refresh = _fetch_store_row(
+                connection_parameters, namespace, key_no_refresh
+            )
+            assert after_refresh is not None
+            assert after_no_refresh is not None
+            # Only the ``refresh_ttl=True`` row had its ``expires_at`` bumped.
+            assert after_refresh["expires_at"] > before_refresh["expires_at"]
+            assert after_no_refresh["expires_at"] == before_no_refresh["expires_at"]
+        finally:
+            store.close()
+
+    def test_get_expired_row_returns_none(
+        self, connection_parameters: ConnectionParameters
+    ) -> None:
+        """Rows past ``expires_at`` must not be returned by ``GetOp``."""
+        store = SingleStoreStore(**connection_parameters.as_kwargs())
+        try:
+            store.setup()
+            namespace = ("users", "alice")
+            key = "prefs"
+
+            # Insert normally, then force the row to be already expired via a
+            # direct UPDATE — avoids waiting a full minute for the smallest
+            # supported TTL to elapse.
+            store.batch([PutOp(namespace, key, {"theme": "dark"}, ttl=1.0)])
+            conn = connect(**connection_parameters.as_kwargs())
+            try:
+                cur = conn.cursor()
+                cur.execute(
+                    "UPDATE store SET expires_at = DATE_SUB(NOW(), INTERVAL 1 MINUTE) "
+                    "WHERE prefix = %s AND `key` = %s",
+                    ("/".join(namespace), key),
+                )
+                cur.close()
+            finally:
+                conn.close()
+
+            # Both refresh modes must treat an expired row as absent.
+            results = store.batch(
+                [
+                    GetOp(namespace, key, refresh_ttl=False),
+                    GetOp(namespace, key, refresh_ttl=True),
+                ]
+            )
+            assert results == [None, None]
+        finally:
+            store.close()
+
+    def test_get_refresh_ttl_default_is_true(
+        self, connection_parameters: ConnectionParameters
+    ) -> None:
+        """``GetOp`` defaults ``refresh_ttl`` to ``True`` — verify it refreshes."""
+        store = SingleStoreStore(**connection_parameters.as_kwargs())
+        try:
+            store.setup()
+            namespace = ("users", "alice")
+            key = "prefs"
+
+            store.batch([PutOp(namespace, key, {"theme": "dark"}, ttl=60.0)])
+            before = _fetch_store_row(connection_parameters, namespace, key)
+            assert before is not None and before["expires_at"] is not None
+
+            time.sleep(1.1)
+
+            # No explicit refresh_ttl — rely on the default.
+            results = store.batch([GetOp(namespace, key)])
+            assert _as_item(results[0]) is not None
+
+            after = _fetch_store_row(connection_parameters, namespace, key)
+            assert after is not None and after["expires_at"] is not None
+            assert after["expires_at"] > before["expires_at"]
+        finally:
+            store.close()

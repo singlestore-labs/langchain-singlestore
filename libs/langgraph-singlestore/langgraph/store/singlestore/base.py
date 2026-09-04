@@ -82,7 +82,17 @@ _ON_DUPLICATE_KEY_UPDATE_SQL = """
         ttl_minutes = VALUES(ttl_minutes)
 """
 
-_SELECT_BASE = "SELECT prefix, `key`, value, created_at, updated_at FROM store"
+_SELECT_BASE = """
+    SELECT prefix, `key`, value, created_at, updated_at, expires_at, ttl_minutes
+    FROM store WHERE (expires_at IS NULL OR expires_at > CURRENT_TIMESTAMP) AND
+"""
+
+_REFRESH_TTL_SQL = """
+    UPDATE store
+    SET expires_at = DATE_ADD(NOW(), INTERVAL ttl_minutes MINUTE),
+        updated_at = CURRENT_TIMESTAMP
+    WHERE (expires_at IS NULL OR expires_at > CURRENT_TIMESTAMP) AND
+"""
 
 
 class SingleStoreStore(BaseStore):
@@ -208,16 +218,29 @@ class SingleStoreStore(BaseStore):
         results: list[Result],
         cur: Any,
     ) -> None:
-        # Group by namespace so we can issue one `key IN (...)` per prefix.
         by_ns: dict[tuple[str, ...], list[tuple[int, str]]] = defaultdict(list)
+        by_ns_ttl: dict[tuple[str, ...], list[tuple[int, str]]] = defaultdict(list)
+        # Group `getOps` by whether refreshing ttl or not
         for idx, op in get_ops:
+            if op.refresh_ttl:
+                by_ns_ttl[op.namespace].append((idx, op.key))
             by_ns[op.namespace].append((idx, op.key))
+        # Group by namespace so we can issue one `key IN (...)` per prefix.
 
         for namespace, items in by_ns.items():
+            if namespace in by_ns_ttl:
+                keys_ttl = [k for _, k in by_ns_ttl[namespace]]
+                placeholders_ttl = ",".join(["%s"] * len(keys_ttl))
+                # Handle TTL refresh for this namespace if needed
+                cur.execute(
+                    f"{_REFRESH_TTL_SQL} prefix = %s AND `key` IN ({placeholders_ttl})",
+                    (_namespace_to_text(namespace), *keys_ttl),
+                )
+
             keys = [k for _, k in items]
             placeholders = ",".join(["%s"] * len(keys))
             cur.execute(
-                f"{_SELECT_BASE} WHERE prefix = %s AND `key` IN ({placeholders})",
+                f"{_SELECT_BASE} prefix = %s AND `key` IN ({placeholders})",
                 (_namespace_to_text(namespace), *keys),
             )
             rows_by_key: dict[str, Any] = {}
