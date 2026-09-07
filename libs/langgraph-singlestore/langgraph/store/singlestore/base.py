@@ -20,7 +20,11 @@ import threading
 from collections import defaultdict
 from typing import Any, Iterable, Optional, Sequence, cast
 
-from singlestore_langchain_core import create_connection_pool
+from singlestore_langchain_core import (
+    FilterTypedDict,
+    _parse_filter,
+    create_connection_pool,
+)
 from singlestore_langchain_core._utils import (
     LANGGRAPH_CONNECTOR_NAME,
     compute_connector_version,
@@ -352,6 +356,12 @@ class SingleStoreStore(BaseStore):
                     "Track progress in libs/langgraph-singlestore/CHANGELOG.md."
                 )
             where_sql, params = _search_where(op)
+            if op.refresh_ttl:
+                cur.execute(
+                    f"{_UPSERT_BASE_SQL} {where_sql} "
+                    f"ORDER BY updated_at DESC LIMIT %s OFFSET %s",
+                    (*params, op.limit, op.offset),
+                )
             cur.execute(
                 f"{_SELECT_BASE} {where_sql} "
                 f"ORDER BY updated_at DESC LIMIT %s OFFSET %s",
@@ -547,13 +557,20 @@ def _search_where(op: SearchOp) -> tuple[str, list[Any]]:
     clauses: list[str] = []
     params: list[Any] = []
     if op.namespace_prefix:
-        prefix = _namespace_to_text(op.namespace_prefix)
-        clauses.append("(prefix = %s OR prefix LIKE %s)")
-        params.extend([prefix, prefix + ".%"])
-    if op.filter:
-        pass
-        # todo: implement filter handling using singlestore-langchain-core
-    where_sql = "WHERE " + " AND ".join(clauses) if clauses else ""
+        prefix = _namespace_for_prefix_search(op.namespace_prefix)
+        clauses.append("(prefix LIKE %s)")
+        params.extend([prefix])
+    if op.filter and len(op.filter) > 0:
+        adjusted_filter = cast(
+            FilterTypedDict,
+            {"$and": [{k: v} for k, v in op.filter.items()]},
+        )
+        filter_clause, filter_params = _parse_filter(
+            filter_dict=adjusted_filter, metadata_field="value"
+        )
+        clauses.append(f"({filter_clause})")
+        params.extend(filter_params)
+    where_sql = " AND ".join(clauses) if clauses else ""
     return where_sql, params
 
 
