@@ -10,6 +10,7 @@ import re
 import pytest
 
 from langgraph.store.singlestore.base import (
+    _namespace_for_exact_search,
     _namespace_for_prefix_search,
     _namespace_for_suffix_search,
     _namespace_to_text,
@@ -221,3 +222,75 @@ class TestNamespaceForSuffixSearch:
         assert _like_matches(pattern, _namespace_to_text(("agents", "x", "prefs")))
         # Depth-2 target has only one ``/`` — not enough separators.
         assert not _like_matches(pattern, _namespace_to_text(("users", "prefs")))
+
+
+class TestNamespaceForExactSearch:
+    """``_namespace_for_exact_search`` returns the SQL fragment that matches a
+    single namespace exactly. It picks between ``prefix = %s`` (fast, index-
+    friendly) and ``prefix LIKE %s`` depending on whether the tuple contains a
+    ``*`` wildcard segment."""
+
+    @pytest.mark.parametrize(
+        "namespace,expected_text",
+        [
+            (("users",), "users"),
+            (("users", "alice"), "users/alice"),
+            (("users", "alice", "prefs"), "users/alice/prefs"),
+            # Escape-scheme parts still go through ``_namespace_to_text``.
+            (("a/b",), "a\\/b"),
+            (("a\\b",), "a\\\\b"),
+            (("100%",), "100\\%"),
+            (("user_1",), "user\\_1"),
+            (("użytkownik", "小明"), "użytkownik/小明"),
+            # Empty tuple is a degenerate but valid input.
+            ((), ""),
+        ],
+    )
+    def test_no_wildcard_uses_equality(
+        self, namespace: tuple[str, ...], expected_text: str
+    ) -> None:
+        clause, param = _namespace_for_exact_search(namespace)
+        assert clause == "prefix = %s"
+        assert param == expected_text
+        # The parameter must be exactly what ``_namespace_to_text`` produced.
+        assert param == _namespace_to_text(namespace)
+
+    @pytest.mark.parametrize(
+        "namespace,expected_pattern",
+        [
+            (("*",), "%"),
+            (("users", "*"), "users/%"),
+            (("*", "alice"), "%/alice"),
+            (("users", "*", "prefs"), "users/%/prefs"),
+            # ``*`` combined with parts that themselves contain LIKE metachars.
+            (("100%", "*"), "100\\%/%"),
+            (("user_1", "*"), "user\\_1/%"),
+            (("a/b", "*"), "a\\/b/%"),
+        ],
+    )
+    def test_wildcard_uses_like_pattern(
+        self, namespace: tuple[str, ...], expected_pattern: str
+    ) -> None:
+        clause, param = _namespace_for_exact_search(namespace)
+        assert clause == "prefix LIKE %s"
+        assert param == expected_pattern
+
+    def test_exact_match_is_index_friendly_equality(self) -> None:
+        """A wildcard-free tuple must use ``=`` — required for index usage."""
+        clause, _ = _namespace_for_exact_search(("users", "alice"))
+        assert clause == "prefix = %s"
+        assert "LIKE" not in clause
+
+    def test_wildcard_pattern_matches_intended_targets(self) -> None:
+        # ``("users", "*")`` yields the raw pattern ``users/%``. Because ``%``
+        # is greedy under LIKE (spans ``/``), this matches any namespace under
+        # ``users`` at *any* depth ≥ 2 — callers that want single-segment
+        # semantics must post-filter on the returned tuple length.
+        _, pattern = _namespace_for_exact_search(("users", "*"))
+        assert _like_matches(pattern, _namespace_to_text(("users", "alice")))
+        assert _like_matches(pattern, _namespace_to_text(("users", "bob")))
+        assert _like_matches(pattern, _namespace_to_text(("users", "alice", "prefs")))
+        # Depth-1 has no separator — doesn't match.
+        assert not _like_matches(pattern, _namespace_to_text(("users",)))
+        # A sibling root doesn't match either.
+        assert not _like_matches(pattern, _namespace_to_text(("agents",)))

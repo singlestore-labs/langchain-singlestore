@@ -356,11 +356,13 @@ class SingleStoreStore(BaseStore):
                     "Track progress in libs/langgraph-singlestore/CHANGELOG.md."
                 )
             where_sql, params = _search_where(op)
+            # ``_SELECT_BASE`` / ``_REFRESH_TTL_SQL`` end with an unconditional
+            # ``AND``; supply a truthy tail when the op has no prefix/filter.
+            where_sql = where_sql or "TRUE"
             if op.refresh_ttl:
                 cur.execute(
-                    f"{_UPSERT_BASE_SQL} {where_sql} "
-                    f"ORDER BY updated_at DESC LIMIT %s OFFSET %s",
-                    (*params, op.limit, op.offset),
+                    f"{_REFRESH_TTL_SQL} {where_sql}",
+                    tuple(params),
                 )
             cur.execute(
                 f"{_SELECT_BASE} {where_sql} "
@@ -382,11 +384,14 @@ class SingleStoreStore(BaseStore):
             where_clauses: list[str] = []
             params: list[Any] = []
             for cond in op.match_conditions or []:
+                exact_filter, exact_match_prefix = _namespace_for_exact_search(
+                    cond.path
+                )
+                where_clauses.append(f"({exact_filter} OR prefix LIKE %s)")
+                params.append(exact_match_prefix)
                 if cond.match_type == "prefix":
-                    where_clauses.append("prefix LIKE %s")
                     params.append(_namespace_for_prefix_search(cond.path))
                 elif cond.match_type == "suffix":
-                    where_clauses.append("prefix LIKE %s")
                     params.append(_namespace_for_suffix_search(cond.path))
                 else:  # pragma: no cover - defensive
                     logger.warning(
@@ -529,6 +534,18 @@ def _namespace_for_suffix_search(namespace: tuple[str, ...]) -> str:
     )
 
 
+def _namespace_for_exact_search(namespace: tuple[str, ...]) -> tuple[str, str]:
+    if "*" in namespace:
+        return (
+            "prefix LIKE %s",
+            _namespace_with_wildcard_for_search(namespace),
+        )
+    return (
+        "prefix = %s",
+        _namespace_to_text(namespace),
+    )
+
+
 def _text_to_namespace(text: str) -> tuple[str, ...]:
     if not text:
         return ()
@@ -557,9 +574,12 @@ def _search_where(op: SearchOp) -> tuple[str, list[Any]]:
     clauses: list[str] = []
     params: list[Any] = []
     if op.namespace_prefix:
+        exact_filter, exact_match_param = _namespace_for_exact_search(
+            op.namespace_prefix
+        )
         prefix = _namespace_for_prefix_search(op.namespace_prefix)
-        clauses.append("(prefix LIKE %s)")
-        params.extend([prefix])
+        clauses.append(f"(prefix LIKE %s OR {exact_filter})")
+        params.extend([prefix, exact_match_param])
     if op.filter and len(op.filter) > 0:
         adjusted_filter = cast(
             FilterTypedDict,

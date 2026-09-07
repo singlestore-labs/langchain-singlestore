@@ -11,7 +11,15 @@ from typing import Any, cast
 import pytest
 from singlestoredb.connection import connect
 
-from langgraph.store.base import GetOp, Item, ListNamespacesOp, MatchCondition, PutOp
+from langgraph.store.base import (
+    GetOp,
+    Item,
+    ListNamespacesOp,
+    MatchCondition,
+    PutOp,
+    SearchItem,
+    SearchOp,
+)
 from langgraph.store.singlestore import SingleStoreStore
 
 from .conftest import ConnectionParameters
@@ -967,5 +975,787 @@ class TestSingleStoreStoreListNamespacesOp:
                 ),
             )
             assert got == [("users", "alice")]
+        finally:
+            store.close()
+
+
+# --- SearchOp -----------------------------------------------------------------
+
+# Seed keyed by (namespace, key) so the same namespace can appear multiple
+# Seed keyed by (namespace, key) so the same namespace can appear multiple
+# times. Namespaces are deliberately at least 3 segments so that
+# ``namespace_prefix=("users",)`` (which the store translates to a
+# ``LIKE 'users/%'`` pattern) actually matches. Values carry heterogeneous
+# fields so every filter operator has both matching and non-matching rows.
+_SEARCH_SEED: tuple[tuple[tuple[str, ...], str, dict[str, Any]], ...] = (
+    (
+        ("docs", "public", "articles"),
+        "readme",
+        {
+            "type": "readme",
+            "score": 5,
+            "public": True,
+            "tags": ["intro", "docs"],
+            "seeded": True,
+        },
+    ),
+    (
+        ("docs", "public", "articles"),
+        "guide",
+        {
+            "type": "guide",
+            "score": 3,
+            "public": True,
+            "tags": ["intro", "tutorial"],
+            "seeded": True,
+        },
+    ),
+    (
+        ("docs", "private", "notes"),
+        "draft",
+        {
+            "type": "draft",
+            "score": 1,
+            "public": False,
+            "tags": ["wip"],
+            "seeded": True,
+        },
+    ),
+    (
+        ("users", "alice", "profile"),
+        "main",
+        {"role": "admin", "level": 10, "active": True, "seeded": True},
+    ),
+    (
+        ("users", "bob", "profile"),
+        "main",
+        {"role": "user", "level": 5, "active": True, "seeded": True},
+    ),
+    (
+        ("users", "carol", "profile"),
+        "main",
+        # Only carol carries the ``vip`` field — used to test ``$exists``.
+        {
+            "role": "user",
+            "level": 2,
+            "active": False,
+            "vip": "no",
+            "seeded": True,
+        },
+    ),
+)
+
+
+def _seed_search(store: SingleStoreStore) -> None:
+    store.batch([PutOp(ns, key, val) for ns, key, val in _SEARCH_SEED])
+
+
+def _search(store: SingleStoreStore, op: SearchOp) -> list[SearchItem]:
+    results = store.batch([op])
+    assert len(results) == 1
+    return cast("list[SearchItem]", results[0])
+
+
+def _keys(items: list[SearchItem]) -> set[tuple[tuple[str, ...], str]]:
+    """Reduce ``SearchItem``s to the identifying (namespace, key) pairs."""
+    return {(it.namespace, it.key) for it in items}
+
+
+def _expected_keys(
+    predicate: "Any",
+) -> set[tuple[tuple[str, ...], str]]:
+    return {(ns, key) for ns, key, val in _SEARCH_SEED if predicate(ns, key, val)}
+
+
+class TestSingleStoreStoreSearchOp:
+    def test_no_prefix_no_filter_returns_all_rows(
+        self, connection_parameters: ConnectionParameters
+    ) -> None:
+        store = SingleStoreStore(**connection_parameters.as_kwargs())
+        try:
+            store.setup()
+            _seed_search(store)
+
+            got = _search(
+                store, SearchOp(namespace_prefix=(), limit=100, refresh_ttl=False)
+            )
+            assert _keys(got) == _expected_keys(lambda ns, k, v: True)
+            for item in got:
+                assert isinstance(item, SearchItem)
+                assert isinstance(item.value, dict)
+        finally:
+            store.close()
+
+    def test_empty_store_returns_empty_list(
+        self, connection_parameters: ConnectionParameters
+    ) -> None:
+        store = SingleStoreStore(**connection_parameters.as_kwargs())
+        try:
+            store.setup()
+            got = _search(store, SearchOp(namespace_prefix=(), refresh_ttl=False))
+            assert got == []
+        finally:
+            store.close()
+
+    def test_all_seeded_rows_via_broad_filter(
+        self, connection_parameters: ConnectionParameters
+    ) -> None:
+        """Substitute for ``test_no_prefix_no_filter_returns_all_rows`` — pin a
+        broad filter so ``_search_where`` produces a non-empty clause."""
+        store = SingleStoreStore(**connection_parameters.as_kwargs())
+        try:
+            store.setup()
+            _seed_search(store)
+
+            got = _search(
+                store,
+                SearchOp(
+                    namespace_prefix=(),
+                    filter={"seeded": True},
+                    limit=100,
+                    refresh_ttl=False,
+                ),
+            )
+            assert _keys(got) == _expected_keys(lambda ns, k, v: True)
+            for item in got:
+                assert isinstance(item, SearchItem)
+                assert isinstance(item.value, dict)
+        finally:
+            store.close()
+
+    def test_namespace_prefix_filters_by_root(
+        self, connection_parameters: ConnectionParameters
+    ) -> None:
+        store = SingleStoreStore(**connection_parameters.as_kwargs())
+        try:
+            store.setup()
+            _seed_search(store)
+
+            got = _search(
+                store,
+                SearchOp(namespace_prefix=("users",), limit=100, refresh_ttl=False),
+            )
+            assert _keys(got) == _expected_keys(lambda ns, k, v: ns[0] == "users")
+        finally:
+            store.close()
+
+    def test_namespace_prefix_filters_by_nested_path(
+        self, connection_parameters: ConnectionParameters
+    ) -> None:
+        store = SingleStoreStore(**connection_parameters.as_kwargs())
+        try:
+            store.setup()
+            _seed_search(store)
+
+            got = _search(
+                store,
+                SearchOp(
+                    namespace_prefix=("docs", "public"),
+                    limit=100,
+                    refresh_ttl=False,
+                ),
+            )
+            assert _keys(got) == _expected_keys(
+                lambda ns, k, v: ns[:2] == ("docs", "public")
+            )
+        finally:
+            store.close()
+
+    def test_namespace_prefix_no_match_returns_empty(
+        self, connection_parameters: ConnectionParameters
+    ) -> None:
+        store = SingleStoreStore(**connection_parameters.as_kwargs())
+        try:
+            store.setup()
+            _seed_search(store)
+
+            got = _search(
+                store,
+                SearchOp(namespace_prefix=("nope",), refresh_ttl=False),
+            )
+            assert got == []
+        finally:
+            store.close()
+
+    # ------------------------------------------------------------------ filters
+
+    def test_filter_exact_match_string(
+        self, connection_parameters: ConnectionParameters
+    ) -> None:
+        store = SingleStoreStore(**connection_parameters.as_kwargs())
+        try:
+            store.setup()
+            _seed_search(store)
+
+            got = _search(
+                store,
+                SearchOp(
+                    namespace_prefix=(),
+                    filter={"role": "admin"},
+                    limit=100,
+                    refresh_ttl=False,
+                ),
+            )
+            assert _keys(got) == _expected_keys(
+                lambda ns, k, v: v.get("role") == "admin"
+            )
+        finally:
+            store.close()
+
+    def test_filter_exact_match_bool(
+        self, connection_parameters: ConnectionParameters
+    ) -> None:
+        store = SingleStoreStore(**connection_parameters.as_kwargs())
+        try:
+            store.setup()
+            _seed_search(store)
+
+            got = _search(
+                store,
+                SearchOp(
+                    namespace_prefix=(),
+                    filter={"active": True},
+                    limit=100,
+                    refresh_ttl=False,
+                ),
+            )
+            assert _keys(got) == _expected_keys(
+                lambda ns, k, v: v.get("active") is True
+            )
+        finally:
+            store.close()
+
+    def test_filter_exact_match_int(
+        self, connection_parameters: ConnectionParameters
+    ) -> None:
+        store = SingleStoreStore(**connection_parameters.as_kwargs())
+        try:
+            store.setup()
+            _seed_search(store)
+
+            got = _search(
+                store,
+                SearchOp(
+                    namespace_prefix=(),
+                    filter={"score": 5},
+                    limit=100,
+                    refresh_ttl=False,
+                ),
+            )
+            assert _keys(got) == _expected_keys(lambda ns, k, v: v.get("score") == 5)
+        finally:
+            store.close()
+
+    def test_filter_eq_operator(
+        self, connection_parameters: ConnectionParameters
+    ) -> None:
+        store = SingleStoreStore(**connection_parameters.as_kwargs())
+        try:
+            store.setup()
+            _seed_search(store)
+
+            got = _search(
+                store,
+                SearchOp(
+                    namespace_prefix=(),
+                    filter={"role": {"$eq": "user"}},
+                    limit=100,
+                    refresh_ttl=False,
+                ),
+            )
+            assert _keys(got) == _expected_keys(
+                lambda ns, k, v: v.get("role") == "user"
+            )
+        finally:
+            store.close()
+
+    def test_filter_ne_operator(
+        self, connection_parameters: ConnectionParameters
+    ) -> None:
+        """``$ne`` requires the field to exist AND be different — rows without
+        the field are excluded."""
+        store = SingleStoreStore(**connection_parameters.as_kwargs())
+        try:
+            store.setup()
+            _seed_search(store)
+
+            got = _search(
+                store,
+                SearchOp(
+                    namespace_prefix=(),
+                    filter={"role": {"$ne": "admin"}},
+                    limit=100,
+                    refresh_ttl=False,
+                ),
+            )
+            assert _keys(got) == _expected_keys(
+                lambda ns, k, v: "role" in v and v["role"] != "admin"
+            )
+        finally:
+            store.close()
+
+    @pytest.mark.parametrize(
+        ("operator", "value", "predicate"),
+        [
+            ("$gt", 3, lambda x: x > 3),
+            ("$gte", 3, lambda x: x >= 3),
+            ("$lt", 5, lambda x: x < 5),
+            ("$lte", 5, lambda x: x <= 5),
+        ],
+    )
+    def test_filter_numeric_comparisons(
+        self,
+        connection_parameters: ConnectionParameters,
+        operator: str,
+        value: int,
+        predicate: "Any",
+    ) -> None:
+        store = SingleStoreStore(**connection_parameters.as_kwargs())
+        try:
+            store.setup()
+            _seed_search(store)
+
+            got = _search(
+                store,
+                SearchOp(
+                    namespace_prefix=(),
+                    filter={"score": {operator: value}},
+                    limit=100,
+                    refresh_ttl=False,
+                ),
+            )
+            assert _keys(got) == _expected_keys(
+                lambda ns, k, v: "score" in v and predicate(v["score"])
+            )
+        finally:
+            store.close()
+
+    def test_filter_in_operator(
+        self, connection_parameters: ConnectionParameters
+    ) -> None:
+        store = SingleStoreStore(**connection_parameters.as_kwargs())
+        try:
+            store.setup()
+            _seed_search(store)
+
+            got = _search(
+                store,
+                SearchOp(
+                    namespace_prefix=(),
+                    filter={"role": {"$in": ["admin", "user"]}},
+                    limit=100,
+                    refresh_ttl=False,
+                ),
+            )
+            assert _keys(got) == _expected_keys(
+                lambda ns, k, v: v.get("role") in ("admin", "user")
+            )
+        finally:
+            store.close()
+
+    def test_filter_nin_operator(
+        self, connection_parameters: ConnectionParameters
+    ) -> None:
+        """``$nin`` requires the field to exist and NOT be in the list."""
+        store = SingleStoreStore(**connection_parameters.as_kwargs())
+        try:
+            store.setup()
+            _seed_search(store)
+
+            got = _search(
+                store,
+                SearchOp(
+                    namespace_prefix=(),
+                    filter={"role": {"$nin": ["admin"]}},
+                    limit=100,
+                    refresh_ttl=False,
+                ),
+            )
+            assert _keys(got) == _expected_keys(
+                lambda ns, k, v: "role" in v and v["role"] not in ("admin",)
+            )
+        finally:
+            store.close()
+
+    def test_filter_exists_true(
+        self, connection_parameters: ConnectionParameters
+    ) -> None:
+        store = SingleStoreStore(**connection_parameters.as_kwargs())
+        try:
+            store.setup()
+            _seed_search(store)
+
+            got = _search(
+                store,
+                SearchOp(
+                    namespace_prefix=(),
+                    filter={"vip": {"$exists": True}},
+                    limit=100,
+                    refresh_ttl=False,
+                ),
+            )
+            assert _keys(got) == _expected_keys(lambda ns, k, v: "vip" in v)
+        finally:
+            store.close()
+
+    def test_filter_exists_false(
+        self, connection_parameters: ConnectionParameters
+    ) -> None:
+        store = SingleStoreStore(**connection_parameters.as_kwargs())
+        try:
+            store.setup()
+            _seed_search(store)
+
+            got = _search(
+                store,
+                SearchOp(
+                    namespace_prefix=(),
+                    filter={"vip": {"$exists": False}},
+                    limit=100,
+                    refresh_ttl=False,
+                ),
+            )
+            assert _keys(got) == _expected_keys(lambda ns, k, v: "vip" not in v)
+        finally:
+            store.close()
+
+    def test_filter_multiple_keys_are_anded(
+        self, connection_parameters: ConnectionParameters
+    ) -> None:
+        store = SingleStoreStore(**connection_parameters.as_kwargs())
+        try:
+            store.setup()
+            _seed_search(store)
+
+            got = _search(
+                store,
+                SearchOp(
+                    namespace_prefix=(),
+                    filter={"role": "user", "active": True},
+                    limit=100,
+                    refresh_ttl=False,
+                ),
+            )
+            assert _keys(got) == _expected_keys(
+                lambda ns, k, v: v.get("role") == "user" and v.get("active") is True
+            )
+        finally:
+            store.close()
+
+    def test_filter_mixes_exact_and_operator(
+        self, connection_parameters: ConnectionParameters
+    ) -> None:
+        store = SingleStoreStore(**connection_parameters.as_kwargs())
+        try:
+            store.setup()
+            _seed_search(store)
+
+            got = _search(
+                store,
+                SearchOp(
+                    namespace_prefix=(),
+                    filter={"role": "user", "level": {"$gte": 5}},
+                    limit=100,
+                    refresh_ttl=False,
+                ),
+            )
+            assert _keys(got) == _expected_keys(
+                lambda ns, k, v: v.get("role") == "user" and v.get("level", 0) >= 5
+            )
+        finally:
+            store.close()
+
+    def test_prefix_and_filter_combined(
+        self, connection_parameters: ConnectionParameters
+    ) -> None:
+        store = SingleStoreStore(**connection_parameters.as_kwargs())
+        try:
+            store.setup()
+            _seed_search(store)
+
+            got = _search(
+                store,
+                SearchOp(
+                    namespace_prefix=("docs",),
+                    filter={"public": True},
+                    limit=100,
+                    refresh_ttl=False,
+                ),
+            )
+            assert _keys(got) == _expected_keys(
+                lambda ns, k, v: ns[0] == "docs" and v.get("public") is True
+            )
+        finally:
+            store.close()
+
+    def test_filter_with_no_matches_returns_empty(
+        self, connection_parameters: ConnectionParameters
+    ) -> None:
+        store = SingleStoreStore(**connection_parameters.as_kwargs())
+        try:
+            store.setup()
+            _seed_search(store)
+
+            got = _search(
+                store,
+                SearchOp(
+                    namespace_prefix=(),
+                    filter={"role": "ghost"},
+                    refresh_ttl=False,
+                ),
+            )
+            assert got == []
+        finally:
+            store.close()
+
+    # -------------------------------------------------------------- pagination
+
+    def test_pagination_limit_caps_result_size(
+        self, connection_parameters: ConnectionParameters
+    ) -> None:
+        store = SingleStoreStore(**connection_parameters.as_kwargs())
+        try:
+            store.setup()
+            _seed_search(store)
+
+            got = _search(
+                store,
+                SearchOp(
+                    namespace_prefix=(),
+                    filter={"seeded": True},
+                    limit=2,
+                    refresh_ttl=False,
+                ),
+            )
+            assert len(got) == 2
+            expected_all = _expected_keys(lambda ns, k, v: True)
+            assert _keys(got).issubset(expected_all)
+        finally:
+            store.close()
+
+    def test_pagination_limit_plus_offset_covers_full_set(
+        self, connection_parameters: ConnectionParameters
+    ) -> None:
+        """Paging through the whole store returns every seeded row exactly once."""
+        store = SingleStoreStore(**connection_parameters.as_kwargs())
+        try:
+            store.setup()
+            _seed_search(store)
+
+            expected_all = _expected_keys(lambda ns, k, v: True)
+            page_size = 2
+            collected: set[tuple[tuple[str, ...], str]] = set()
+            offset = 0
+            while True:
+                page = _search(
+                    store,
+                    SearchOp(
+                        namespace_prefix=(),
+                        filter={"seeded": True},
+                        limit=page_size,
+                        offset=offset,
+                        refresh_ttl=False,
+                    ),
+                )
+                if not page:
+                    break
+                page_keys = _keys(page)
+                assert page_keys.isdisjoint(collected)
+                collected |= page_keys
+                offset += page_size
+                assert offset <= len(expected_all) + page_size
+            assert collected == expected_all
+        finally:
+            store.close()
+
+    def test_pagination_offset_past_end_returns_empty(
+        self, connection_parameters: ConnectionParameters
+    ) -> None:
+        store = SingleStoreStore(**connection_parameters.as_kwargs())
+        try:
+            store.setup()
+            _seed_search(store)
+
+            got = _search(
+                store,
+                SearchOp(
+                    namespace_prefix=(),
+                    filter={"seeded": True},
+                    offset=len(_SEARCH_SEED) + 10,
+                    limit=5,
+                    refresh_ttl=False,
+                ),
+            )
+            assert got == []
+        finally:
+            store.close()
+
+    # -------------------------------------------------------------- ordering
+
+    def test_results_ordered_by_updated_at_desc(
+        self, connection_parameters: ConnectionParameters
+    ) -> None:
+        """Newer writes come first; ordering is stable across the returned page."""
+        store = SingleStoreStore(**connection_parameters.as_kwargs())
+        try:
+            store.setup()
+
+            # Space inserts by >1s so ``updated_at`` (TIMESTAMP, 1s granularity)
+            # is strictly different between rows. Uses a 2-segment namespace
+            # so ``namespace_prefix=("t",)`` (LIKE ``t/%``) actually matches.
+            store.batch([PutOp(("t", "sub"), "a", {"i": 0})])
+            time.sleep(1.1)
+            store.batch([PutOp(("t", "sub"), "b", {"i": 1})])
+            time.sleep(1.1)
+            store.batch([PutOp(("t", "sub"), "c", {"i": 2})])
+
+            got = _search(
+                store,
+                SearchOp(namespace_prefix=("t",), limit=10, refresh_ttl=False),
+            )
+            assert [it.key for it in got] == ["c", "b", "a"]
+            for earlier, later in zip(got, got[1:]):
+                assert earlier.updated_at >= later.updated_at
+        finally:
+            store.close()
+
+    def test_update_moves_row_to_front(
+        self, connection_parameters: ConnectionParameters
+    ) -> None:
+        """Re-writing an existing row bumps ``updated_at`` and reshuffles order."""
+        store = SingleStoreStore(**connection_parameters.as_kwargs())
+        try:
+            store.setup()
+
+            store.batch([PutOp(("t", "sub"), "a", {"i": 0})])
+            time.sleep(1.1)
+            store.batch([PutOp(("t", "sub"), "b", {"i": 1})])
+            time.sleep(1.1)
+            # Overwrite ``a`` — it should now be newest.
+            store.batch([PutOp(("t", "sub"), "a", {"i": 99})])
+
+            got = _search(
+                store,
+                SearchOp(namespace_prefix=("t",), limit=10, refresh_ttl=False),
+            )
+            assert [it.key for it in got] == ["a", "b"]
+            assert got[0].value == {"i": 99}
+        finally:
+            store.close()
+
+    # -------------------------------------------------------------- TTL / expiry
+
+    def test_expired_rows_are_excluded(
+        self, connection_parameters: ConnectionParameters
+    ) -> None:
+        """Rows whose TTL has elapsed must not surface in ``search``."""
+        store = SingleStoreStore(**connection_parameters.as_kwargs())
+        try:
+            store.setup()
+            store.batch(
+                [
+                    PutOp(("t", "sub"), "fresh", {"i": 0}),
+                    PutOp(("t", "sub"), "stale", {"i": 1}, ttl=1.0),
+                ]
+            )
+            conn = connect(**connection_parameters.as_kwargs())
+            try:
+                cur = conn.cursor()
+                cur.execute(
+                    "UPDATE store SET expires_at = DATE_SUB(NOW(), INTERVAL 1 MINUTE) "
+                    "WHERE `key` = %s",
+                    ("stale",),
+                )
+                cur.close()
+            finally:
+                conn.close()
+
+            got = _search(
+                store,
+                SearchOp(namespace_prefix=("t",), limit=10, refresh_ttl=False),
+            )
+            assert [it.key for it in got] == ["fresh"]
+        finally:
+            store.close()
+
+    def test_refresh_ttl_true_bumps_expires_at_on_matching_rows(
+        self, connection_parameters: ConnectionParameters
+    ) -> None:
+        """``SearchOp(refresh_ttl=True)`` extends ``expires_at`` on rows that
+        match the search — and only those rows."""
+        store = SingleStoreStore(**connection_parameters.as_kwargs())
+        try:
+            store.setup()
+            store.batch(
+                [
+                    PutOp(("t", "sub"), "match", {"kind": "hit"}, ttl=1.0),
+                    PutOp(("t", "sub"), "skip", {"kind": "miss"}, ttl=1.0),
+                ]
+            )
+            before = {
+                r["key"]: r["expires_at"]
+                for r in _fetch_all_store_rows(connection_parameters)
+            }
+            assert before["match"] is not None and before["skip"] is not None
+
+            # TIMESTAMP granularity is 1s — sleep so the refresh is observable.
+            time.sleep(1.1)
+
+            # Filter matches only ``match``; ``refresh_ttl=True`` (default).
+            got = _search(
+                store,
+                SearchOp(
+                    namespace_prefix=("t",),
+                    filter={"kind": "hit"},
+                    limit=10,
+                ),
+            )
+            assert [it.key for it in got] == ["match"]
+
+            after = {
+                r["key"]: r["expires_at"]
+                for r in _fetch_all_store_rows(connection_parameters)
+            }
+            assert after["match"] > before["match"]
+            assert after["skip"] == before["skip"]
+        finally:
+            store.close()
+
+    def test_refresh_ttl_true_with_no_prefix_no_filter(
+        self, connection_parameters: ConnectionParameters
+    ) -> None:
+        """The empty-clause path must produce valid SQL for both the SELECT
+        and the TTL-refresh UPDATE."""
+        store = SingleStoreStore(**connection_parameters.as_kwargs())
+        try:
+            store.setup()
+            _seed_search(store)
+
+            got = _search(store, SearchOp(namespace_prefix=(), limit=100))
+            assert _keys(got) == _expected_keys(lambda ns, k, v: True)
+        finally:
+            store.close()
+
+    # -------------------------------------------------------------- vector query
+
+    def test_query_raises_not_implemented(
+        self, connection_parameters: ConnectionParameters
+    ) -> None:
+        """Natural-language search is out of scope for this draft."""
+        store = SingleStoreStore(**connection_parameters.as_kwargs())
+        try:
+            store.setup()
+            _seed_search(store)
+
+            with pytest.raises(NotImplementedError, match="Vector search"):
+                store.batch(
+                    [
+                        SearchOp(
+                            namespace_prefix=(),
+                            query="find me something",
+                            refresh_ttl=False,
+                        )
+                    ]
+                )
         finally:
             store.close()

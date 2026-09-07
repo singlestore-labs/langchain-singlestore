@@ -17,6 +17,7 @@ import pytest
 
 from langgraph.store.base import SearchOp
 from langgraph.store.singlestore.base import (
+    _namespace_for_exact_search,
     _namespace_for_prefix_search,
     _search_where,
 )
@@ -61,9 +62,6 @@ def test_none_filter_is_ignored() -> None:
         ("users",),
         ("users", "alice"),
         ("users", "alice", "prefs"),
-        # Wildcard segment.
-        ("users", "*"),
-        ("*", "alice"),
         # Segments containing the separator, escape char, and LIKE wildcards.
         ("a/b",),
         ("a\\b", "c"),
@@ -71,12 +69,35 @@ def test_none_filter_is_ignored() -> None:
         ("under_score",),
     ],
 )
-def test_prefix_only_produces_like_clause(
+def test_prefix_only_produces_like_or_eq_clause(
     namespace_prefix: tuple[str, ...],
 ) -> None:
+    """A concrete (non-wildcard) prefix matches descendants *or* the exact row."""
     where_sql, params = _search_where(_op(namespace_prefix=namespace_prefix))
-    assert where_sql == "(prefix LIKE %s)"
-    assert params == [_namespace_for_prefix_search(namespace_prefix)]
+    assert where_sql == "(prefix LIKE %s OR prefix = %s)"
+    exact_filter, exact_param = _namespace_for_exact_search(namespace_prefix)
+    assert exact_filter == "prefix = %s"
+    assert params == [_namespace_for_prefix_search(namespace_prefix), exact_param]
+
+
+@pytest.mark.parametrize(
+    "namespace_prefix",
+    [
+        ("users", "*"),
+        ("*", "alice"),
+        ("*",),
+        ("users", "*", "prefs"),
+    ],
+)
+def test_prefix_with_wildcard_produces_two_like_clauses(
+    namespace_prefix: tuple[str, ...],
+) -> None:
+    """A wildcard prefix uses ``LIKE`` on both sides of the ``OR``."""
+    where_sql, params = _search_where(_op(namespace_prefix=namespace_prefix))
+    assert where_sql == "(prefix LIKE %s OR prefix LIKE %s)"
+    exact_filter, exact_param = _namespace_for_exact_search(namespace_prefix)
+    assert exact_filter == "prefix LIKE %s"
+    assert params == [_namespace_for_prefix_search(namespace_prefix), exact_param]
 
 
 # ---------------------------------------------------------------- filter only
@@ -196,12 +217,14 @@ def test_prefix_and_filter_are_anded_in_order() -> None:
         )
     )
     assert where_sql == (
-        "(prefix LIKE %s)"
+        "(prefix LIKE %s OR prefix = %s)"
         " AND "
         "(JSON_MATCH_ANY(MATCH_PARAM_STRING_STRICT() = %s, value, %s))"
     )
+    _, exact_param = _namespace_for_exact_search(("users", "alice"))
     assert params == [
         _namespace_for_prefix_search(("users", "alice")),
+        exact_param,
         "active",
         "status",
     ]
@@ -215,18 +238,39 @@ def test_prefix_and_multi_condition_filter() -> None:
         )
     )
     assert where_sql == (
-        "(prefix LIKE %s)"
+        "(prefix LIKE %s OR prefix = %s)"
         " AND "
         "(JSON_MATCH_ANY(MATCH_PARAM_STRING_STRICT() = %s, value, %s)"
         " AND "
         "JSON_EXTRACT_DOUBLE(value, %s) > %s)"
     )
+    _, exact_param = _namespace_for_exact_search(("docs",))
     assert params == [
         _namespace_for_prefix_search(("docs",)),
+        exact_param,
         "report",
         "type",
         "score",
         4,
+    ]
+
+
+def test_wildcard_prefix_and_filter_combined() -> None:
+    """Wildcard prefix + filter still ANDs the prefix clause with the filter."""
+    where_sql, params = _search_where(
+        _op(namespace_prefix=("users", "*"), filter={"active": True})
+    )
+    assert where_sql == (
+        "(prefix LIKE %s OR prefix LIKE %s)"
+        " AND "
+        "(JSON_MATCH_ANY(MATCH_PARAM_BOOL_STRICT() = %s, value, %s))"
+    )
+    _, exact_param = _namespace_for_exact_search(("users", "*"))
+    assert params == [
+        _namespace_for_prefix_search(("users", "*")),
+        exact_param,
+        True,
+        "active",
     ]
 
 
