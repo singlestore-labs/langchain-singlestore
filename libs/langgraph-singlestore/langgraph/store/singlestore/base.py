@@ -258,35 +258,41 @@ class SingleStoreStore(BaseStore):
     ) -> None:
         by_ns: dict[tuple[str, ...], list[tuple[int, str]]] = defaultdict(list)
         by_ns_ttl: dict[tuple[str, ...], list[tuple[int, str]]] = defaultdict(list)
-        # Group `getOps` by whether refreshing ttl or not
         for idx, op in get_ops:
             if op.refresh_ttl:
                 by_ns_ttl[op.namespace].append((idx, op.key))
             by_ns[op.namespace].append((idx, op.key))
-        # Group by namespace so we can issue one `key IN (...)` per prefix.
 
+        # One `key IN (...)` per namespace. When any op in the namespace asked
+        # for a TTL refresh, wrap the SELECT + UPDATE in a transaction and
+        # ``FOR UPDATE`` the read to avoid a lost-update race with a concurrent
+        # writer or sweeper.
         for namespace, items in by_ns.items():
-            if namespace in by_ns_ttl:
-                keys_ttl = [k for _, k in by_ns_ttl[namespace]]
-                placeholders_ttl = ",".join(["%s"] * len(keys_ttl))
-                # Handle TTL refresh for this namespace if needed
-                cur.execute(
-                    f"{_REFRESH_TTL_SQL} prefix = %s AND `key` IN ({placeholders_ttl})",
-                    (_namespace_to_text(namespace), *keys_ttl),
-                )
-
+            namespace_text = _namespace_to_text(namespace)
             keys = [k for _, k in items]
             placeholders = ",".join(["%s"] * len(keys))
-            cur.execute(
-                f"{_SELECT_BASE} prefix = %s AND `key` IN ({placeholders})",
-                (_namespace_to_text(namespace), *keys),
+            needs_refresh = namespace in by_ns_ttl
+
+            select_sql = f"{_SELECT_BASE} prefix = %s AND `key` IN ({placeholders})" + (
+                " FOR UPDATE" if needs_refresh else ""
             )
-            rows_by_key: dict[str, Any] = {}
-            for row in cur.fetchall():
-                rows_by_key[_row_get(row, 1, "key")] = row
+            if needs_refresh:
+                cur.execute("BEGIN")
+            cur.execute(select_sql, (namespace_text, *keys))
+            rows_by_key = {_row_get(row, 1, "key"): row for row in cur.fetchall()}
             for idx, key in items:
                 row = rows_by_key.get(key)
                 results[idx] = _row_to_item(namespace, row) if row else None
+
+            if needs_refresh:
+                ttl_keys = [k for _, k in by_ns_ttl[namespace]]
+                ttl_placeholders = ",".join(["%s"] * len(ttl_keys))
+                cur.execute(
+                    f"{_REFRESH_TTL_SQL} prefix = %s "
+                    f"AND `key` IN ({ttl_placeholders})",
+                    (namespace_text, *ttl_keys),
+                )
+                cur.execute("COMMIT")
 
     def _batch_put_ops(
         self,
