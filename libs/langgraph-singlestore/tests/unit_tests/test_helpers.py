@@ -21,6 +21,7 @@ from langgraph.store.base import (
     GetOp,
     Item,
     ListNamespacesOp,
+    Op,
     PutOp,
     SearchItem,
     SearchOp,
@@ -42,7 +43,7 @@ class TestGroupOps:
         assert total == 0
 
     def test_groups_by_concrete_op_type(self) -> None:
-        ops = [
+        ops: list[Op] = [
             GetOp(("users", "alice"), "prefs"),
             PutOp(("users", "alice"), "prefs", {"theme": "dark"}),
             GetOp(("users", "bob"), "prefs"),
@@ -62,7 +63,7 @@ class TestGroupOps:
     def test_preserves_original_index_within_each_group(self) -> None:
         """The (idx, op) pairs must retain the caller's original position so
         results can be scattered back into the correct slots."""
-        ops = [
+        ops: list[Op] = [
             GetOp(("a",), "1"),
             PutOp(("a",), "1", {"x": 1}),
             GetOp(("a",), "2"),
