@@ -16,6 +16,7 @@ from langgraph.store.base import (
     Item,
     ListNamespacesOp,
     MatchCondition,
+    Op,
     PutOp,
     SearchItem,
     SearchOp,
@@ -2003,5 +2004,395 @@ class TestSingleStoreStoreTTLSweeperThread:
             assert store._ttl_sweeper_thread is not None
             assert store.stop_ttl_sweeper(timeout=5.0) is True
             assert future.result(timeout=5.0) is None
+        finally:
+            store.close()
+
+
+# --- Mixed batch --------------------------------------------------------------
+# ``SingleStoreStore.batch`` executes ops in a fixed order regardless of the
+# caller's ordering: GetOp → SearchOp → ListNamespacesOp → PutOp. Reads
+# therefore see the store state that existed *before* the batch, and writes
+# take effect only after every read in the batch has run. These tests pin
+# that contract and verify that results are still scattered back into the
+# caller's original op positions.
+
+
+class TestSingleStoreStoreMixedBatch:
+    def test_empty_batch_returns_empty_list(
+        self, connection_parameters: ConnectionParameters
+    ) -> None:
+        store = SingleStoreStore(**connection_parameters.as_kwargs())
+        try:
+            store.setup()
+            assert store.batch([]) == []
+        finally:
+            store.close()
+
+    def test_result_shape_matches_caller_op_order(
+        self, connection_parameters: ConnectionParameters
+    ) -> None:
+        """Each result slot corresponds to the caller's op at the same index,
+        regardless of the internal execution order (Get → Search → List → Put)."""
+        store = SingleStoreStore(**connection_parameters.as_kwargs())
+        try:
+            store.setup()
+            store.batch([PutOp(("users", "alice"), "prefs", {"theme": "dark"})])
+
+            ops: list[Op] = [
+                GetOp(("users", "alice"), "prefs"),
+                PutOp(("users", "bob"), "prefs", {"theme": "light"}),
+                SearchOp(namespace_prefix=("users",), refresh_ttl=False),
+                ListNamespacesOp(),
+                GetOp(("users", "carol"), "prefs"),
+            ]
+            results = store.batch(ops)
+
+            assert len(results) == len(ops)
+            # 0: existing key -> Item
+            got = _as_item(results[0])
+            assert got is not None
+            assert got.value == {"theme": "dark"}
+            # 1: put -> None sentinel
+            assert results[1] is None
+            # 2: search -> list[SearchItem]
+            search_hits = cast("list[SearchItem]", results[2])
+            assert isinstance(search_hits, list)
+            assert all(isinstance(it, SearchItem) for it in search_hits)
+            # 3: list namespaces -> list[tuple[str, ...]]
+            listed = cast("list[tuple[str, ...]]", results[3])
+            assert isinstance(listed, list)
+            assert all(isinstance(ns, tuple) for ns in listed)
+            # 4: missing key -> None
+            assert results[4] is None
+        finally:
+            store.close()
+
+    def test_reads_see_pre_batch_state_not_puts_in_same_batch(
+        self, connection_parameters: ConnectionParameters
+    ) -> None:
+        """A ``GetOp`` batched with a ``PutOp`` for the same key returns
+        ``None`` (or the pre-batch value) — writes run last."""
+        store = SingleStoreStore(**connection_parameters.as_kwargs())
+        try:
+            store.setup()
+            namespace = ("users", "alice")
+
+            results = store.batch(
+                [
+                    PutOp(namespace, "prefs", {"theme": "dark"}),
+                    GetOp(namespace, "prefs"),
+                ]
+            )
+            assert results[0] is None
+            # Get ran BEFORE Put, so it must not observe the pending write.
+            assert _as_item(results[1]) is None
+
+            # Follow-up read (new batch) does see the write.
+            observed = _as_item(store.batch([GetOp(namespace, "prefs")])[0])
+            assert observed is not None
+            assert observed.value == {"theme": "dark"}
+        finally:
+            store.close()
+
+    def test_get_sees_pre_batch_value_when_batched_with_overwrite(
+        self, connection_parameters: ConnectionParameters
+    ) -> None:
+        """If a key already exists and the batch both reads and overwrites it,
+        the read returns the OLD value; a later batch observes the new one."""
+        store = SingleStoreStore(**connection_parameters.as_kwargs())
+        try:
+            store.setup()
+            namespace = ("users", "alice")
+
+            store.batch([PutOp(namespace, "prefs", {"theme": "dark"})])
+
+            results = store.batch(
+                [
+                    GetOp(namespace, "prefs"),
+                    PutOp(namespace, "prefs", {"theme": "light"}),
+                ]
+            )
+            got = _as_item(results[0])
+            assert got is not None
+            assert got.value == {"theme": "dark"}
+            assert results[1] is None
+
+            after = _as_item(store.batch([GetOp(namespace, "prefs")])[0])
+            assert after is not None
+            assert after.value == {"theme": "light"}
+        finally:
+            store.close()
+
+    def test_get_sees_pre_batch_value_when_batched_with_delete(
+        self, connection_parameters: ConnectionParameters
+    ) -> None:
+        """``PutOp(value=None)`` is a delete; a GetOp for the same key in the
+        same batch still returns the pre-batch row."""
+        store = SingleStoreStore(**connection_parameters.as_kwargs())
+        try:
+            store.setup()
+            namespace = ("users", "alice")
+
+            store.batch([PutOp(namespace, "prefs", {"theme": "dark"})])
+
+            results = store.batch(
+                [
+                    GetOp(namespace, "prefs"),
+                    PutOp(namespace, "prefs", None),
+                ]
+            )
+            got = _as_item(results[0])
+            assert got is not None
+            assert got.value == {"theme": "dark"}
+            assert results[1] is None
+
+            # After the batch, the row is gone.
+            assert _fetch_store_row(connection_parameters, namespace, "prefs") is None
+        finally:
+            store.close()
+
+    def test_search_and_list_do_not_see_puts_from_same_batch(
+        self, connection_parameters: ConnectionParameters
+    ) -> None:
+        """Both ``SearchOp`` and ``ListNamespacesOp`` run before ``PutOp``,
+        so a new namespace introduced in the same batch is not visible to
+        either read op."""
+        store = SingleStoreStore(**connection_parameters.as_kwargs())
+        try:
+            store.setup()
+            store.batch([PutOp(("users", "alice"), "prefs", {"theme": "dark"})])
+
+            results = store.batch(
+                [
+                    PutOp(("agents", "planner"), "state", {"step": 1}),
+                    SearchOp(
+                        namespace_prefix=(),
+                        filter={"theme": "dark"},
+                        refresh_ttl=False,
+                    ),
+                    ListNamespacesOp(),
+                ]
+            )
+            search_hits = cast("list[SearchItem]", results[1])
+            listed = cast("list[tuple[str, ...]]", results[2])
+
+            # Search filter matches alice's row; agents row is not yet visible.
+            assert {(it.namespace, it.key) for it in search_hits} == {
+                (("users", "alice"), "prefs")
+            }
+            # ListNamespaces sees only pre-batch namespaces.
+            assert ("agents", "planner") not in listed
+            assert ("users", "alice") in listed
+
+            # After the batch commits, both namespaces are visible.
+            after_list = _list(store, ListNamespacesOp())
+            assert ("agents", "planner") in after_list
+            assert ("users", "alice") in after_list
+        finally:
+            store.close()
+
+    def test_within_group_order_is_preserved_across_result_slots(
+        self, connection_parameters: ConnectionParameters
+    ) -> None:
+        """Interleaving many ops of the same type across the caller list —
+        each GetOp result must land back at its original slot."""
+        store = SingleStoreStore(**connection_parameters.as_kwargs())
+        try:
+            store.setup()
+            store.batch(
+                [
+                    PutOp(("users", "alice"), "prefs", {"i": 1}),
+                    PutOp(("users", "bob"), "prefs", {"i": 2}),
+                    PutOp(("users", "carol"), "prefs", {"i": 3}),
+                ]
+            )
+
+            ops: list[Op] = [
+                GetOp(("users", "alice"), "prefs"),
+                PutOp(("users", "dave"), "prefs", {"i": 4}),
+                GetOp(("users", "bob"), "prefs"),
+                PutOp(("users", "erin"), "prefs", {"i": 5}),
+                GetOp(("users", "carol"), "prefs"),
+                GetOp(("users", "ghost"), "prefs"),
+            ]
+            results = store.batch(ops)
+
+            assert results[1] is None
+            assert results[3] is None
+            for idx, expected_i in [(0, 1), (2, 2), (4, 3)]:
+                item = _as_item(results[idx])
+                assert item is not None
+                assert item.value == {"i": expected_i}
+            assert results[5] is None
+        finally:
+            store.close()
+
+    def test_deduplicated_puts_in_batch_last_write_wins(
+        self, connection_parameters: ConnectionParameters
+    ) -> None:
+        """Multiple ``PutOp``s for the same (namespace, key) collapse to the
+        last one; a batched ``GetOp`` still sees the pre-batch state (or
+        ``None`` for a brand-new key)."""
+        store = SingleStoreStore(**connection_parameters.as_kwargs())
+        try:
+            store.setup()
+            namespace = ("t",)
+
+            results = store.batch(
+                [
+                    PutOp(namespace, "k", {"v": 1}),
+                    GetOp(namespace, "k"),
+                    PutOp(namespace, "k", None),  # delete
+                    PutOp(namespace, "k", {"v": 2}),  # final winner
+                ]
+            )
+            # The get slot ran against pre-batch state: key did not exist.
+            assert results[0] is None
+            assert _as_item(results[1]) is None
+            assert results[2] is None
+            assert results[3] is None
+
+            # Post-batch: the final PutOp wins.
+            final = _as_item(store.batch([GetOp(namespace, "k")])[0])
+            assert final is not None
+            assert final.value == {"v": 2}
+            assert _count_store_rows(connection_parameters) == 1
+        finally:
+            store.close()
+
+    def test_get_refresh_ttl_and_search_refresh_ttl_in_same_batch(
+        self, connection_parameters: ConnectionParameters
+    ) -> None:
+        """A single batch may mix a GetOp with ``refresh_ttl=True`` and a
+        SearchOp with ``refresh_ttl=True`` — both must independently bump
+        ``expires_at`` on the rows they touched."""
+        store = SingleStoreStore(**connection_parameters.as_kwargs())
+        try:
+            store.setup()
+            store.batch(
+                [
+                    PutOp(("users", "alice"), "prefs", {"role": "admin"}, ttl=1.0),
+                    PutOp(("users", "bob"), "prefs", {"role": "user"}, ttl=1.0),
+                    PutOp(("users", "carol"), "prefs", {"role": "user"}, ttl=1.0),
+                ]
+            )
+            before = {
+                r["key"]: r["expires_at"]
+                for r in _fetch_all_store_rows(connection_parameters)
+            }
+            # 1s TIMESTAMP granularity — sleep so the refresh is observable.
+            time.sleep(1.1)
+
+            results = store.batch(
+                [
+                    GetOp(("users", "alice"), "prefs", refresh_ttl=True),
+                    SearchOp(
+                        namespace_prefix=("users",),
+                        filter={"role": "user"},
+                        refresh_ttl=True,
+                    ),
+                ]
+            )
+            assert _as_item(results[0]) is not None
+            hits = cast("list[SearchItem]", results[1])
+            assert {it.key for it in hits} == {"prefs"}
+            assert {it.namespace for it in hits} == {
+                ("users", "bob"),
+                ("users", "carol"),
+            }
+
+            after = {
+                r["key"]: r["expires_at"]
+                for r in _fetch_all_store_rows(connection_parameters)
+            }
+            # All three rows were touched by one of the two reads.
+            for key in ("prefs",):
+                assert after[key] > before[key]
+        finally:
+            store.close()
+
+    def test_mixed_batch_all_op_types_end_to_end(
+        self, connection_parameters: ConnectionParameters
+    ) -> None:
+        """One batch containing every op type; asserts each result slot and
+        the final DB state after the batch commits."""
+        store = SingleStoreStore(**connection_parameters.as_kwargs())
+        try:
+            store.setup()
+            store.batch(
+                [
+                    PutOp(("users", "alice"), "prefs", {"theme": "dark"}),
+                    PutOp(("docs", "public"), "readme", {"seeded": True}),
+                ]
+            )
+
+            ops: list[Op] = [
+                GetOp(("users", "alice"), "prefs"),  # 0 - hit
+                SearchOp(
+                    namespace_prefix=("docs",),
+                    filter={"seeded": True},
+                    refresh_ttl=False,
+                ),  # 1 - one hit
+                PutOp(("users", "bob"), "prefs", {"theme": "light"}),  # 2
+                ListNamespacesOp(),  # 3
+                GetOp(("users", "bob"), "prefs"),  # 4 - miss (pre-batch)
+                PutOp(("users", "alice"), "prefs", None),  # 5 - delete
+            ]
+            results = store.batch(ops)
+
+            item0 = _as_item(results[0])
+            assert item0 is not None and item0.value == {"theme": "dark"}
+
+            hits = cast("list[SearchItem]", results[1])
+            assert {(h.namespace, h.key) for h in hits} == {
+                (("docs", "public"), "readme")
+            }
+
+            assert results[2] is None
+
+            listed = cast("list[tuple[str, ...]]", results[3])
+            assert ("users", "alice") in listed
+            assert ("docs", "public") in listed
+            assert ("users", "bob") not in listed  # not yet visible
+
+            assert _as_item(results[4]) is None
+            assert results[5] is None
+
+            # Post-batch final state: bob written, alice deleted, docs untouched.
+            all_rows = _fetch_all_store_rows(connection_parameters)
+            keys_by_prefix = {(r["prefix"], r["key"]) for r in all_rows}
+            assert keys_by_prefix == {
+                ("users/bob", "prefs"),
+                ("docs/public", "readme"),
+            }
+        finally:
+            store.close()
+
+    @pytest.mark.asyncio
+    async def test_abatch_mixed_ops_returns_same_shape_as_batch(
+        self, connection_parameters: ConnectionParameters
+    ) -> None:
+        """``abatch`` delegates to ``batch`` via the default executor — the
+        result shape and ordering must be identical to the sync path."""
+        store = SingleStoreStore(**connection_parameters.as_kwargs())
+        try:
+            store.setup()
+            store.batch([PutOp(("users", "alice"), "prefs", {"theme": "dark"})])
+
+            ops: list[Op] = [
+                GetOp(("users", "alice"), "prefs"),
+                PutOp(("users", "bob"), "prefs", {"theme": "light"}),
+                SearchOp(namespace_prefix=("users",), refresh_ttl=False),
+                ListNamespacesOp(),
+            ]
+            results = await store.abatch(ops)
+
+            assert len(results) == len(ops)
+            item = _as_item(results[0])
+            assert item is not None
+            assert item.value == {"theme": "dark"}
+            assert results[1] is None
+            assert isinstance(results[2], list)
+            assert isinstance(results[3], list)
         finally:
             store.close()
