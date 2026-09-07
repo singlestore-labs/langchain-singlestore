@@ -6,14 +6,14 @@ from ``singlestore_langchain_core``, so callers may supply an existing
 connection, an existing pool, or plain connection kwargs — identical
 semantics to ``langchain-singlestore``.
 
-Vector search (``index=...``) and TTL sweeping are intentionally out of scope
-for this draft; they will be layered on top of ``SingleStoreVectorStore`` and
-a background sweeper in a follow-up.
+Vector search (``index=...``) is intentionally out of scope for this draft;
+it will be layered on top of ``SingleStoreVectorStore`` in a follow-up.
 """
 
 from __future__ import annotations
 
 import asyncio
+import concurrent.futures
 import json
 import logging
 import threading
@@ -64,7 +64,8 @@ MIGRATIONS: Sequence[str] = [
         expires_at TIMESTAMP DEFAULT NULL,
         ttl_minutes INTEGER DEFAULT NULL,
         PRIMARY KEY (prefix(255), `key`(255)),
-        INDEX store_prefix_idx (prefix(255))
+        INDEX store_prefix_idx (prefix(255)),
+        INDEX expires_at_idx (expires_at)
     );""",
     # ``truncate_ns_prefix`` slices an escape-encoded prefix at the Nth
     # *unescaped* "/". Mirrors the Python escape scheme in ``_escape_ns_part``:
@@ -146,6 +147,13 @@ class SingleStoreStore(BaseStore):
       :class:`QueueConnectionPool` is built internally.
 
     ``connection`` and ``connection_pool`` are mutually exclusive.
+
+    Note:
+        If you provide a TTL configuration, you must
+        explicitly call `start_ttl_sweeper()` to begin
+        the background thread that removes expired items.
+        Call `stop_ttl_sweeper()` to properly clean up
+        resources when you're done with the store.
     """
 
     supports_ttl: bool = True
@@ -180,6 +188,7 @@ class SingleStoreStore(BaseStore):
         )
         self.ttl_config = ttl_config
         self._ttl_sweeper_thread: Optional[threading.Thread] = None
+        self._ttl_sweeper_future: Optional[concurrent.futures.Future[None]] = None
         self._ttl_stop_event = threading.Event()
         # Serialise access to the underlying connection when the caller
         # shares a single connection across threads.
@@ -435,6 +444,125 @@ class SingleStoreStore(BaseStore):
                 ns = _text_to_namespace(_row_get(row, 0, "trunc_prefix"))
                 seen[ns] = None
             results[idx] = list(seen.keys())
+
+    def sweep_ttl(self) -> int:
+        """Delete expired store items based on TTL.
+
+        Returns:
+            int: The number of deleted items.
+        """
+        with self._cursor() as cur:
+            # ``<=`` mirrors the read-path check (``expires_at > NOW()`` means
+            # still valid); a row with ``expires_at == NOW()`` is already
+            # invisible to reads and must be sweepable.
+            cur.execute(
+                "DELETE FROM store "
+                "WHERE expires_at IS NOT NULL AND expires_at <= NOW()"
+            )
+            deleted_count = cur.rowcount
+            return deleted_count
+
+    def start_ttl_sweeper(
+        self, sweep_interval_minutes: float | None = None
+    ) -> concurrent.futures.Future[None]:
+        """Start a background thread that periodically deletes expired items.
+
+        The first sweep runs synchronously in the background thread as soon as
+        it starts, so a caller can ``start_ttl_sweeper`` and immediately
+        ``stop_ttl_sweeper`` to force one pass.
+
+        Returns:
+            A ``Future`` that resolves when the background loop has exited
+            (i.e. after ``stop_ttl_sweeper`` is called or the loop crashes).
+            Idempotent: calling this while a sweeper is already running
+            returns the *same* future for the running loop.
+        """
+        if not self.ttl_config:
+            future: concurrent.futures.Future[None] = concurrent.futures.Future()
+            future.set_result(None)
+            return future
+
+        if (
+            self._ttl_sweeper_thread
+            and self._ttl_sweeper_thread.is_alive()
+            and self._ttl_sweeper_future is not None
+        ):
+            logger.info("TTL sweeper thread is already running")
+            return self._ttl_sweeper_future
+
+        self._ttl_stop_event.clear()
+
+        interval = float(
+            sweep_interval_minutes or self.ttl_config.get("sweep_interval_minutes") or 5
+        )
+        logger.info(f"Starting store TTL sweeper with interval {interval} minutes")
+
+        future = concurrent.futures.Future()
+
+        def _sweep_loop() -> None:
+            try:
+                while not self._ttl_stop_event.is_set():
+                    try:
+                        expired_items = self.sweep_ttl()
+                        if expired_items > 0:
+                            logger.info(f"Store swept {expired_items} expired items")
+                    except Exception as exc:
+                        logger.exception(
+                            "Store TTL sweep iteration failed", exc_info=exc
+                        )
+                    # ``wait`` returns True as soon as ``stop_ttl_sweeper``
+                    # fires the event, giving prompt shutdown.
+                    if self._ttl_stop_event.wait(interval * 60):
+                        break
+                future.set_result(None)
+            except Exception as exc:
+                future.set_exception(exc)
+
+        thread = threading.Thread(target=_sweep_loop, daemon=True, name="ttl-sweeper")
+        self._ttl_sweeper_thread = thread
+        self._ttl_sweeper_future = future
+        thread.start()
+        return future
+
+    def stop_ttl_sweeper(self, timeout: float | None = None) -> bool:
+        """Stop the TTL sweeper thread if it's running.
+
+        Args:
+            timeout: Maximum time to wait for the thread to stop, in seconds.
+                If `None`, wait indefinitely.
+
+        Returns:
+            bool: True if the thread was successfully stopped or wasn't running,
+                False if the timeout was reached before the thread stopped.
+        """
+        if not self._ttl_sweeper_thread or not self._ttl_sweeper_thread.is_alive():
+            return True
+
+        logger.info("Stopping TTL sweeper thread")
+        self._ttl_stop_event.set()
+
+        self._ttl_sweeper_thread.join(timeout)
+        success = not self._ttl_sweeper_thread.is_alive()
+
+        if success:
+            self._ttl_sweeper_thread = None
+            self._ttl_sweeper_future = None
+            logger.info("TTL sweeper thread stopped")
+        else:
+            logger.warning("Timed out waiting for TTL sweeper thread to stop")
+
+        return success
+
+    def __del__(self) -> None:
+        # Safe during interpreter shutdown: attribute access and logger calls
+        # can fail once modules are torn down, so swallow everything.
+        try:
+            if hasattr(self, "_ttl_stop_event") and hasattr(
+                self, "_ttl_sweeper_thread"
+            ):
+                self.stop_ttl_sweeper(timeout=0.1)
+        except Exception:
+            pass
 
     # -------------------------------------------------------------- cursor
     class _CursorContext:

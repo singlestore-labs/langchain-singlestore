@@ -19,6 +19,7 @@ from langgraph.store.base import (
     PutOp,
     SearchItem,
     SearchOp,
+    TTLConfig,
 )
 from langgraph.store.singlestore import SingleStoreStore
 
@@ -1757,5 +1758,250 @@ class TestSingleStoreStoreSearchOp:
                         )
                     ]
                 )
+        finally:
+            store.close()
+
+
+# --- TTL sweeping -------------------------------------------------------------
+
+
+def _expire_rows_by_key(params: ConnectionParameters, keys: list[str]) -> None:
+    """Force the given rows past their ``expires_at`` via raw SQL."""
+    conn = connect(**params.as_kwargs())
+    try:
+        cur = conn.cursor()
+        placeholders = ",".join(["%s"] * len(keys))
+        cur.execute(
+            f"UPDATE store SET expires_at = DATE_SUB(NOW(), INTERVAL 1 MINUTE) "
+            f"WHERE `key` IN ({placeholders})",
+            tuple(keys),
+        )
+        cur.close()
+    finally:
+        conn.close()
+
+
+def _wait_until(predicate: Any, timeout: float = 5.0, interval: float = 0.05) -> bool:
+    """Poll ``predicate`` up to ``timeout`` seconds; return the last value."""
+    deadline = time.time() + timeout
+    result = predicate()
+    while not result and time.time() < deadline:
+        time.sleep(interval)
+        result = predicate()
+    return bool(result)
+
+
+class TestSingleStoreStoreSweepTTL:
+    def test_sweep_ttl_deletes_only_expired_rows(
+        self, connection_parameters: ConnectionParameters
+    ) -> None:
+        """Only rows whose ``expires_at`` has passed are removed; rows with a
+        future ``expires_at`` and rows with ``ttl_minutes IS NULL`` survive."""
+        store = SingleStoreStore(**connection_parameters.as_kwargs())
+        try:
+            store.setup()
+            store.batch(
+                [
+                    PutOp(("t",), "no_ttl", {"i": 0}),
+                    PutOp(("t",), "fresh", {"i": 1}, ttl=60.0),
+                    PutOp(("t",), "stale1", {"i": 2}, ttl=1.0),
+                    PutOp(("t",), "stale2", {"i": 3}, ttl=1.0),
+                ]
+            )
+            _expire_rows_by_key(connection_parameters, ["stale1", "stale2"])
+
+            deleted = store.sweep_ttl()
+            assert deleted == 2
+
+            remaining = {r["key"] for r in _fetch_all_store_rows(connection_parameters)}
+            assert remaining == {"no_ttl", "fresh"}
+        finally:
+            store.close()
+
+    def test_sweep_ttl_returns_zero_when_nothing_expired(
+        self, connection_parameters: ConnectionParameters
+    ) -> None:
+        store = SingleStoreStore(**connection_parameters.as_kwargs())
+        try:
+            store.setup()
+            store.batch(
+                [
+                    PutOp(("t",), "no_ttl", {"i": 0}),
+                    PutOp(("t",), "fresh", {"i": 1}, ttl=60.0),
+                ]
+            )
+            assert store.sweep_ttl() == 0
+            assert _count_store_rows(connection_parameters) == 2
+        finally:
+            store.close()
+
+    def test_sweep_ttl_on_empty_store_returns_zero(
+        self, connection_parameters: ConnectionParameters
+    ) -> None:
+        store = SingleStoreStore(**connection_parameters.as_kwargs())
+        try:
+            store.setup()
+            assert store.sweep_ttl() == 0
+        finally:
+            store.close()
+
+    def test_sweep_ttl_boundary_expires_at_equal_now_is_deleted(
+        self, connection_parameters: ConnectionParameters
+    ) -> None:
+        """A row with ``expires_at == NOW()`` is invisible to reads
+        (``_SELECT_BASE`` uses ``expires_at > NOW()``), so the sweeper must
+        delete it — otherwise it would leak."""
+        store = SingleStoreStore(**connection_parameters.as_kwargs())
+        try:
+            store.setup()
+            store.batch([PutOp(("t",), "edge", {"i": 0}, ttl=60.0)])
+            conn = connect(**connection_parameters.as_kwargs())
+            try:
+                cur = conn.cursor()
+                cur.execute(
+                    "UPDATE store SET expires_at = NOW() WHERE `key` = %s",
+                    ("edge",),
+                )
+                cur.close()
+            finally:
+                conn.close()
+
+            deleted = store.sweep_ttl()
+            assert deleted == 1
+            assert _count_store_rows(connection_parameters) == 0
+        finally:
+            store.close()
+
+
+class TestSingleStoreStoreTTLSweeperThread:
+    def test_start_ttl_sweeper_without_config_returns_resolved_future(
+        self, connection_parameters: ConnectionParameters
+    ) -> None:
+        """No ``ttl_config`` → the sweeper is a no-op and the returned future
+        is already resolved."""
+        store = SingleStoreStore(**connection_parameters.as_kwargs())
+        try:
+            store.setup()
+            future = store.start_ttl_sweeper()
+            assert future.done()
+            assert future.result() is None
+            assert store._ttl_sweeper_thread is None
+        finally:
+            store.close()
+
+    def test_start_ttl_sweeper_runs_initial_sweep(
+        self, connection_parameters: ConnectionParameters
+    ) -> None:
+        """The first sweep happens as soon as the background thread starts —
+        before the first ``interval`` wait — so callers don't need to wait
+        one full interval to see effects."""
+        store = SingleStoreStore(
+            ttl_config=TTLConfig(sweep_interval_minutes=60),
+            **connection_parameters.as_kwargs(),
+        )
+        try:
+            store.setup()
+            store.batch(
+                [
+                    PutOp(("t",), "fresh", {"i": 0}),
+                    PutOp(("t",), "stale", {"i": 1}, ttl=1.0),
+                ]
+            )
+            _expire_rows_by_key(connection_parameters, ["stale"])
+            assert _count_store_rows(connection_parameters) == 2
+
+            future = store.start_ttl_sweeper()
+            assert not future.done()
+
+            assert _wait_until(lambda: _count_store_rows(connection_parameters) == 1)
+            remaining = {r["key"] for r in _fetch_all_store_rows(connection_parameters)}
+            assert remaining == {"fresh"}
+
+            assert store.stop_ttl_sweeper(timeout=5.0) is True
+            assert future.result(timeout=5.0) is None
+        finally:
+            store.close()
+
+    def test_stop_ttl_sweeper_when_not_running_returns_true(
+        self, connection_parameters: ConnectionParameters
+    ) -> None:
+        store = SingleStoreStore(**connection_parameters.as_kwargs())
+        try:
+            store.setup()
+            assert store.stop_ttl_sweeper() is True
+        finally:
+            store.close()
+
+    def test_start_ttl_sweeper_is_idempotent(
+        self, connection_parameters: ConnectionParameters
+    ) -> None:
+        """A second ``start_ttl_sweeper`` on an already-running sweeper
+        returns the same tracked future without spawning a second thread."""
+        store = SingleStoreStore(
+            ttl_config=TTLConfig(sweep_interval_minutes=60),
+            **connection_parameters.as_kwargs(),
+        )
+        try:
+            store.setup()
+            first = store.start_ttl_sweeper()
+            thread = store._ttl_sweeper_thread
+            assert thread is not None and thread.is_alive()
+
+            second = store.start_ttl_sweeper()
+            assert second is first
+            assert store._ttl_sweeper_thread is thread
+
+            assert store.stop_ttl_sweeper(timeout=5.0) is True
+            assert first.result(timeout=5.0) is None
+        finally:
+            store.close()
+
+    def test_start_after_stop_starts_a_new_thread(
+        self, connection_parameters: ConnectionParameters
+    ) -> None:
+        """After ``stop_ttl_sweeper``, a subsequent ``start_ttl_sweeper`` must
+        launch a fresh thread and return a fresh future."""
+        store = SingleStoreStore(
+            ttl_config=TTLConfig(sweep_interval_minutes=60),
+            **connection_parameters.as_kwargs(),
+        )
+        try:
+            store.setup()
+            first_future = store.start_ttl_sweeper()
+            first_thread = store._ttl_sweeper_thread
+            assert first_thread is not None
+
+            assert store.stop_ttl_sweeper(timeout=5.0) is True
+            assert first_future.result(timeout=5.0) is None
+            assert store._ttl_sweeper_thread is None
+
+            second_future = store.start_ttl_sweeper()
+            second_thread = store._ttl_sweeper_thread
+            assert second_thread is not None
+            assert second_thread is not first_thread
+            assert second_future is not first_future
+
+            assert store.stop_ttl_sweeper(timeout=5.0) is True
+            assert second_future.result(timeout=5.0) is None
+        finally:
+            store.close()
+
+    def test_sweep_interval_minutes_kwarg_overrides_config(
+        self, connection_parameters: ConnectionParameters
+    ) -> None:
+        """The ``sweep_interval_minutes`` argument to ``start_ttl_sweeper``
+        wins over the value in ``ttl_config``. We can't measure interval
+        directly without waiting, so this test just verifies that the call
+        accepts a fractional value and the sweeper starts + stops cleanly."""
+        store = SingleStoreStore(
+            ttl_config=TTLConfig(sweep_interval_minutes=60),
+            **connection_parameters.as_kwargs(),
+        )
+        try:
+            store.setup()
+            future = store.start_ttl_sweeper(sweep_interval_minutes=0.01)
+            assert store._ttl_sweeper_thread is not None
+            assert store.stop_ttl_sweeper(timeout=5.0) is True
+            assert future.result(timeout=5.0) is None
         finally:
             store.close()
