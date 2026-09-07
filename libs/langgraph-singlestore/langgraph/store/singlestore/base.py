@@ -366,19 +366,25 @@ class SingleStoreStore(BaseStore):
             # ``AND``; supply a truthy tail when the op has no prefix/filter.
             where_sql = where_sql or "TRUE"
             if op.refresh_ttl:
-                cur.execute(
-                    f"{_REFRESH_TTL_SQL} {where_sql}",
-                    tuple(params),
-                )
+                cur.execute("BEGIN")
             cur.execute(
                 f"{_SELECT_BASE} {where_sql} "
-                f"ORDER BY updated_at DESC LIMIT %s OFFSET %s",
+                # ``prefix``/``key`` tiebreaker makes pagination deterministic
+                # when many rows share ``updated_at`` (TIMESTAMP is 1s).
+                f"ORDER BY updated_at DESC, prefix, `key` LIMIT %s OFFSET %s"
+                + (" FOR UPDATE" if op.refresh_ttl else ""),
                 (*params, op.limit, op.offset),
             )
             results[idx] = [
                 _row_to_search_item(_text_to_namespace(_row_get(row, 0, "prefix")), row)
                 for row in cur.fetchall()
             ]
+            if op.refresh_ttl:
+                cur.execute(
+                    f"{_REFRESH_TTL_SQL} {where_sql}",
+                    tuple(params),
+                )
+                cur.execute("COMMIT")
 
     def _batch_list_namespaces_ops(
         self,
