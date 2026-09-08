@@ -22,6 +22,7 @@ from langchain_core.documents import Document
 from langchain_core.embeddings import Embeddings
 from langchain_core.vectorstores import VectorStore, VectorStoreRetriever
 from singlestore_langchain_core import create_connection_pool
+from singlestore_langchain_core._index import ANNIndexConfig
 from singlestoredb.connection import Connection
 from sqlalchemy.pool import Pool
 
@@ -166,7 +167,7 @@ class SingleStoreVectorStore(VectorStore):
         id_field: str = "id",
         use_vector_index: bool = False,
         vector_index_name: str = "",
-        vector_index_options: Optional[dict] = None,
+        vector_index_options: Optional[ANNIndexConfig] = None,
         vector_size: int = 1536,
         use_full_text_search: bool = False,
         full_text_index_version: FullTextIndexVersion = DEFAULT_FULL_TEXT_INDEX_VERSION,
@@ -222,12 +223,15 @@ class SingleStoreVectorStore(VectorStore):
             vector_index_name (str, optional): Specifies the name of the vector index.
                 Defaults to empty. Will be ignored if use_vector_index is set to False.
 
-            vector_index_options (dict, optional): Specifies the options for
-                the vector index. Defaults to {}.
-                Will be ignored if use_vector_index is set to False. The options are:
-                index_type (str, optional): Specifies the type of the index.
-
-                Defaults to IVF_PQFS.
+            vector_index_options (ANNIndexConfig, optional): Specifies the options for
+                the vector index. Defaults to None.
+                Will be ignored if use_vector_index is set to False. Accepts an
+                :class:`ANNIndexConfig` (or one of its subclasses such as
+                :class:`AUTOIndexConfig`, :class:`FLATIndexConfig`,
+                :class:`IVF_FLATIndexConfig`, :class:`IVF_PQIndexConfig`,
+                :class:`IVF_PQFSIIndexConfig`, :class:`HNSW_FLATIndexConfig`,
+                :class:`HNSW_PQIndexConfig`) describing the index type and its
+                parameters. Defaults to IVF_PQFS when not specified.
 
                 For more options, please refer to the SingleStore documentation:
                 https://docs.singlestore.com/cloud/reference/sql-reference/vector-functions/vector-indexing/
@@ -1373,7 +1377,7 @@ class SingleStoreVectorStore(VectorStore):
         id_field: str = "id",
         use_vector_index: bool = False,
         vector_index_name: str = "",
-        vector_index_options: Optional[dict] = None,
+        vector_index_options: Optional[ANNIndexConfig] = None,
         vector_size: int = 1536,
         use_full_text_search: bool = False,
         full_text_index_version: FullTextIndexVersion = DEFAULT_FULL_TEXT_INDEX_VERSION,
@@ -1445,11 +1449,15 @@ class SingleStoreVectorStore(VectorStore):
             vector_index_name (str, optional): Specifies the name of the vector index.
                 Defaults to empty. Will be ignored if use_vector_index is set to False.
 
-            vector_index_options (dict, optional): Specifies the options for
-                the vector index. Defaults to {}.
-                Will be ignored if use_vector_index is set to False. The options are:
-                index_type (str, optional): Specifies the type of the index.
-                    Defaults to IVF_PQFS.
+            vector_index_options (ANNIndexConfig, optional): Specifies the options for
+                the vector index. Defaults to None.
+                Will be ignored if use_vector_index is set to False. Accepts an
+                :class:`ANNIndexConfig` (or one of its subclasses such as
+                :class:`AUTOIndexConfig`, :class:`FLATIndexConfig`,
+                :class:`IVF_FLATIndexConfig`, :class:`IVF_PQIndexConfig`,
+                :class:`IVF_PQFSIIndexConfig`, :class:`HNSW_FLATIndexConfig`,
+                :class:`HNSW_PQIndexConfig`) describing the index type and its
+                parameters. Defaults to IVF_PQFS when not specified.
                 For more options, please refer to the SingleStore documentation:
                 https://docs.singlestore.com/cloud/reference/sql-reference/vector-functions/vector-indexing/
 
