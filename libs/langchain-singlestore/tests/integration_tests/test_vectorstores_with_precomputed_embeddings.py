@@ -9,11 +9,16 @@ class is used to ensure the embedding model is never called.
 import math
 import os
 import tempfile
-from typing import Any, Generator, List
+from typing import Any, Generator, List, Optional
 
 import pytest
 from langchain_core.documents import Document
 from langchain_core.embeddings import Embeddings
+from singlestore_langchain_core import (
+    ANNIndexConfig,
+    HNSW_FLATIndexConfig,
+    IVF_PQIndexConfig,
+)
 
 from langchain_singlestore._utils import (
     DistanceStrategy,
@@ -276,7 +281,23 @@ class TestPrecomputedEmbeddingsVectorStoreCreation:
             (
                 DistanceStrategy.EUCLIDEAN_DISTANCE,
                 10,
-                {"index_type": "IVF_PQ", "nlist": 256},
+                IVF_PQIndexConfig(
+                    index_type="IVF_PQ",
+                    nlist=256,
+                    m=2,
+                    nbits=8,
+                    nprobe=8,
+                ),
+            ),
+            (
+                DistanceStrategy.EUCLIDEAN_DISTANCE,
+                16,
+                HNSW_FLATIndexConfig(
+                    index_type="HNSW_FLAT",
+                    M=30,
+                    efConstruction=40,
+                    ef=16,
+                ),
             ),
         ],
     )
@@ -287,7 +308,7 @@ class TestPrecomputedEmbeddingsVectorStoreCreation:
         sample_texts: List[str],
         distance_strategy: DistanceStrategy,
         vector_size: int,
-        index_options: dict,
+        index_options: Optional[ANNIndexConfig],
     ) -> None:
         """Test vectorstore creation with vector index enabled."""
         embeddings = generate_embeddings(len(sample_texts), vector_size)

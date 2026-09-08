@@ -16,6 +16,16 @@ from singlestore_langchain_core._filter import (
     _get_match_param_function,
     _parse_filter,
 )
+from singlestore_langchain_core._index import (
+    ANNIndexConfig,
+    AUTOIndexConfig,
+    FLATIndexConfig,
+    HNSW_FLATIndexConfig,
+    HNSW_PQIndexConfig,
+    IVF_FLATIndexConfig,
+    IVF_PQFSIIndexConfig,
+    IVF_PQIndexConfig,
+)
 from singlestore_langchain_core._utils import (
     DEFAULT_CONNECTOR_NAME,
     LANGGRAPH_CONNECTOR_NAME,
@@ -36,6 +46,14 @@ del metadata
 __all__ = [
     "DEFAULT_CONNECTOR_NAME",
     "LANGGRAPH_CONNECTOR_NAME",
+    "ANNIndexConfig",
+    "AUTOIndexConfig",
+    "FLATIndexConfig",
+    "HNSW_FLATIndexConfig",
+    "HNSW_PQIndexConfig",
+    "IVF_FLATIndexConfig",
+    "IVF_PQFSIIndexConfig",
+    "IVF_PQIndexConfig",
     "DistanceStrategy",
     "FilterTypedDict",
     "FullTextIndexVersion",

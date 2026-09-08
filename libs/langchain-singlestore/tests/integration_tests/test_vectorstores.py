@@ -10,6 +10,10 @@ from langchain_core.documents import Document
 from langchain_core.embeddings import Embeddings
 from langchain_core.vectorstores import VectorStore
 from langchain_tests.integration_tests import VectorStoreIntegrationTests
+from singlestore_langchain_core import (
+    HNSW_FLATIndexConfig,
+    IVF_PQIndexConfig,
+)
 from singlestore_langchain_core._connection import CallerOwnedConnectionPool
 
 from langchain_singlestore._utils import (
@@ -86,7 +90,23 @@ class TestSingleStoreVectorStore(VectorStoreIntegrationTests):
             (
                 DistanceStrategy.EUCLIDEAN_DISTANCE,
                 10,
-                {"index_type": "IVF_PQ", "nlist": 256},
+                IVF_PQIndexConfig(
+                    index_type="IVF_PQ",
+                    nlist=256,
+                    m=2,
+                    nbits=8,
+                    nprobe=8,
+                ),
+            ),
+            (
+                DistanceStrategy.EUCLIDEAN_DISTANCE,
+                16,
+                HNSW_FLATIndexConfig(
+                    index_type="HNSW_FLAT",
+                    M=30,
+                    efConstruction=40,
+                    ef=16,
+                ),
             ),
             (DistanceStrategy.EUCLIDEAN_DISTANCE, 100, None),
         ]

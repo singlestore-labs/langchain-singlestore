@@ -62,11 +62,15 @@ class SingleStoreSemanticCache(BaseCache):
             vector_index_name (str, optional): Specifies the name of the vector index.
                 Defaults to empty. Will be ignored if use_vector_index is set to False.
 
-            vector_index_options (dict, optional): Specifies the options for
-                the vector index. Defaults to {}.
-                Will be ignored if use_vector_index is set to False. The options are:
-                index_type (str, optional): Specifies the type of the index.
-                    Defaults to IVF_PQFS.
+            vector_index_options (ANNIndexConfig, optional): Specifies the options for
+                the vector index. Defaults to None.
+                Will be ignored if use_vector_index is set to False. Accepts an
+                :class:`ANNIndexConfig` (or one of its subclasses such as
+                :class:`AUTOIndexConfig`, :class:`FLATIndexConfig`,
+                :class:`IVF_FLATIndexConfig`, :class:`IVF_PQIndexConfig`,
+                :class:`IVF_PQFSIIndexConfig`, :class:`HNSW_FLATIndexConfig`,
+                :class:`HNSW_PQIndexConfig`) describing the index type and its
+                parameters. Defaults to IVF_PQFS when not specified.
                 For more options, please refer to the SingleStoreDB documentation:
                 https://docs.singlestore.com/cloud/reference/sql-reference/vector-functions/vector-indexing/
 
