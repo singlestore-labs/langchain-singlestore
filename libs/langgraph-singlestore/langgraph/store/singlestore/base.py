@@ -134,6 +134,15 @@ _REFRESH_TTL_SQL = """
 """
 
 
+def _safe_rollback(cur: Any) -> None:
+    # Best-effort ROLLBACK. Swallow driver errors so the original exception
+    # from the caller isn't masked by a rollback failure.
+    try:
+        cur.execute("ROLLBACK")
+    except Exception:
+        logger.exception("ROLLBACK failed after transactional operation error")
+
+
 class SingleStoreStore(BaseStore):
     """SingleStore-backed store (synchronous).
 
@@ -287,21 +296,34 @@ class SingleStoreStore(BaseStore):
             )
             if needs_refresh:
                 cur.execute("BEGIN")
-            cur.execute(select_sql, (namespace_text, *keys))
-            rows_by_key = {_row_get(row, 1, "key"): row for row in cur.fetchall()}
-            for idx, key in items:
-                row = rows_by_key.get(key)
-                results[idx] = _row_to_item(namespace, row) if row else None
+                try:
+                    cur.execute(select_sql, (namespace_text, *keys))
+                    rows_by_key = {
+                        _row_get(row, 1, "key"): row for row in cur.fetchall()
+                    }
+                    for idx, key in items:
+                        row = rows_by_key.get(key)
+                        results[idx] = _row_to_item(namespace, row) if row else None
 
-            if needs_refresh:
-                ttl_keys = [k for _, k in by_ns_ttl[namespace]]
-                ttl_placeholders = ",".join(["%s"] * len(ttl_keys))
-                cur.execute(
-                    f"{_REFRESH_TTL_SQL} prefix = %s "
-                    f"AND `key` IN ({ttl_placeholders})",
-                    (namespace_text, *ttl_keys),
-                )
-                cur.execute("COMMIT")
+                    ttl_keys = [k for _, k in by_ns_ttl[namespace]]
+                    ttl_placeholders = ",".join(["%s"] * len(ttl_keys))
+                    cur.execute(
+                        f"{_REFRESH_TTL_SQL} prefix = %s "
+                        f"AND `key` IN ({ttl_placeholders})",
+                        (namespace_text, *ttl_keys),
+                    )
+                    cur.execute("COMMIT")
+                except BaseException:
+                    # Caller-owned connections are not closed by __exit__, so
+                    # an open transaction would leak onto later operations.
+                    _safe_rollback(cur)
+                    raise
+            else:
+                cur.execute(select_sql, (namespace_text, *keys))
+                rows_by_key = {_row_get(row, 1, "key"): row for row in cur.fetchall()}
+                for idx, key in items:
+                    row = rows_by_key.get(key)
+                    results[idx] = _row_to_item(namespace, row) if row else None
 
     def _batch_put_ops(
         self,
@@ -376,24 +398,44 @@ class SingleStoreStore(BaseStore):
             where_sql = where_sql or "TRUE"
             if op.refresh_ttl:
                 cur.execute("BEGIN")
-            cur.execute(
-                f"{_SELECT_BASE} {where_sql} "
-                # ``prefix``/``key`` tiebreaker makes pagination deterministic
-                # when many rows share ``updated_at`` (TIMESTAMP is 1s).
-                f"ORDER BY updated_at DESC, prefix, `key` LIMIT %s OFFSET %s"
-                + (" FOR UPDATE" if op.refresh_ttl else ""),
-                (*params, op.limit, op.offset),
-            )
-            results[idx] = [
-                _row_to_search_item(_text_to_namespace(_row_get(row, 0, "prefix")), row)
-                for row in cur.fetchall()
-            ]
-            if op.refresh_ttl:
+                try:
+                    cur.execute(
+                        f"{_SELECT_BASE} {where_sql} "
+                        # ``prefix``/``key`` tiebreaker makes pagination
+                        # deterministic when many rows share ``updated_at``
+                        # (TIMESTAMP is 1s).
+                        f"ORDER BY updated_at DESC, prefix, `key` LIMIT %s OFFSET %s"
+                        " FOR UPDATE",
+                        (*params, op.limit, op.offset),
+                    )
+                    results[idx] = [
+                        _row_to_search_item(
+                            _text_to_namespace(_row_get(row, 0, "prefix")), row
+                        )
+                        for row in cur.fetchall()
+                    ]
+                    cur.execute(
+                        f"{_REFRESH_TTL_SQL} {where_sql}",
+                        params,
+                    )
+                    cur.execute("COMMIT")
+                except BaseException:
+                    # Caller-owned connections are not closed by __exit__, so
+                    # an open transaction would leak onto later operations.
+                    _safe_rollback(cur)
+                    raise
+            else:
                 cur.execute(
-                    f"{_REFRESH_TTL_SQL} {where_sql}",
-                    tuple(params),
+                    f"{_SELECT_BASE} {where_sql} "
+                    f"ORDER BY updated_at DESC, prefix, `key` LIMIT %s OFFSET %s",
+                    (*params, op.limit, op.offset),
                 )
-                cur.execute("COMMIT")
+                results[idx] = [
+                    _row_to_search_item(
+                        _text_to_namespace(_row_get(row, 0, "prefix")), row
+                    )
+                    for row in cur.fetchall()
+                ]
 
     def _batch_list_namespaces_ops(
         self,
