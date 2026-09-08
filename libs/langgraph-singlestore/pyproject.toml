@@ -21,7 +21,7 @@ packages = [
 [tool.poetry.dependencies]
 python = ">=3.10,<4.0"
 langgraph-checkpoint = ">=2.0.0,<3.0.0"
-singlestoredb = "^1.16.9"
+singlestoredb = "^1.17.2"
 sqlalchemy = "^2.0.40"
 # Path dep for in-tree development; publish workflow rewrites this to a
 # version constraint (e.g. singlestore-langchain-core = "^0.1.0").
@@ -46,6 +46,9 @@ asyncio_mode = "auto"
 [tool.poetry.group.test]
 optional = true
 
+[tool.poetry.group.test_integration]
+optional = true
+
 [tool.poetry.group.lint]
 optional = true
 
@@ -56,6 +59,9 @@ optional = true
 pytest = ">=7.4.3,<10.0.0"
 pytest-asyncio = ">=0.23.2,<2.0.0"
 pytest-socket = "^0.7.0"
+
+[tool.poetry.group.test_integration.dependencies]
+docker = "^7.1.0"
 
 [tool.poetry.group.lint.dependencies]
 ruff = "^0.5"

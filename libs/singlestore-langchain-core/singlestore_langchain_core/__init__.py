@@ -18,6 +18,7 @@ from singlestore_langchain_core._filter import (
 )
 from singlestore_langchain_core._utils import (
     DEFAULT_CONNECTOR_NAME,
+    LANGGRAPH_CONNECTOR_NAME,
     DistanceStrategy,
     FullTextIndexVersion,
     FullTextScoringMode,
@@ -34,6 +35,7 @@ del metadata
 
 __all__ = [
     "DEFAULT_CONNECTOR_NAME",
+    "LANGGRAPH_CONNECTOR_NAME",
     "DistanceStrategy",
     "FilterTypedDict",
     "FullTextIndexVersion",

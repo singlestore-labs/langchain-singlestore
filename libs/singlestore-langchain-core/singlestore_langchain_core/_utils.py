@@ -10,6 +10,7 @@ from importlib.metadata import PackageNotFoundError, version
 from typing import Optional
 
 DEFAULT_CONNECTOR_NAME = "langchain python sdk"
+LANGGRAPH_CONNECTOR_NAME = "langgraph python sdk"
 
 
 def compute_connector_version(package_name: str, *, fallback: str = "3.0.0") -> str:
