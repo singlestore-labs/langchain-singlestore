@@ -18,24 +18,26 @@ import json
 import logging
 import threading
 from collections import defaultdict
-from typing import Any, Iterable, Optional, Sequence, cast
+from typing import Any, Iterable, Literal, Optional, Sequence, cast
 
 from singlestore_langchain_core import (
+    LANGGRAPH_CONNECTOR_NAME,
+    ANNIndexConfig,
     FilterTypedDict,
     _parse_filter,
-    create_connection_pool,
-)
-from singlestore_langchain_core._utils import (
-    LANGGRAPH_CONNECTOR_NAME,
     compute_connector_version,
+    create_connection_pool,
     set_connector_attributes,
 )
+from singlestore_langchain_core._utils import DistanceStrategy
 from singlestoredb.connection import Connection
 from sqlalchemy.pool import Pool
 
 from langgraph.store.base import (
     BaseStore,
+    Embeddings,
     GetOp,
+    IndexConfig,
     Item,
     ListNamespacesOp,
     Op,
@@ -44,6 +46,8 @@ from langgraph.store.base import (
     SearchItem,
     SearchOp,
     TTLConfig,
+    ensure_embeddings,
+    tokenize_path,
 )
 
 logger = logging.getLogger(__name__)
@@ -143,6 +147,12 @@ def _safe_rollback(cur: Any) -> None:
         logger.exception("ROLLBACK failed after transactional operation error")
 
 
+class SingleStoreIndexConfig(IndexConfig):
+    ann_index_config: ANNIndexConfig
+    _tokenized_fields: list[tuple[str, Literal["$"] | list[str]]]
+    _estimated_num_vectors: int
+
+
 class SingleStoreStore(BaseStore):
     """SingleStore-backed store (synchronous).
 
@@ -177,6 +187,7 @@ class SingleStoreStore(BaseStore):
         pool_size: int = 5,
         max_overflow: int = 10,
         timeout: float = 30,
+        index: Optional[SingleStoreIndexConfig] = None,
         ttl_config: Optional[TTLConfig] = None,
         **connection_kwargs: Any,
     ) -> None:
@@ -195,6 +206,11 @@ class SingleStoreStore(BaseStore):
             timeout=timeout,
             connection_kwargs=self.connection_kwargs,
         )
+        self.index_config = index
+        if self.index_config:
+            self.embeddings, self.index_config = _ensure_index_config(self.index_config)
+        else:
+            self.embeddings = None
         self.ttl_config = ttl_config
         self._ttl_sweeper_thread: Optional[threading.Thread] = None
         self._ttl_sweeper_future: Optional[concurrent.futures.Future[None]] = None
@@ -812,3 +828,37 @@ def _row_to_search_item(namespace: tuple[str, ...], row: Any) -> SearchItem:
         created_at=_row_get(row, 3, "created_at"),
         updated_at=_row_get(row, 4, "updated_at"),
     )
+
+
+def _ensure_index_config(
+    index_config: SingleStoreIndexConfig,
+) -> tuple[Optional[Embeddings], SingleStoreIndexConfig]:
+    index_config = index_config.copy()
+    tokenized: list[tuple[str, Literal["$"] | list[str]]] = []
+    tot = 0
+    fields = index_config.get("fields") or ["$"]
+    if isinstance(fields, str):
+        fields = [fields]
+    if not isinstance(fields, list):
+        raise ValueError(f"Text fields must be a list or a string. Got {fields}")
+    for p in fields:
+        if p == "$":
+            tokenized.append((p, "$"))
+            tot += 1
+        else:
+            toks = tokenize_path(p)
+            tokenized.append((p, toks))
+            tot += len(toks)
+    index_config["__tokenized_fields"] = tokenized  # type: ignore
+    index_config["__estimated_num_vectors"] = tot  # type: ignore
+    index_config["fields"] = fields  # type: ignore
+    embeddings = ensure_embeddings(
+        index_config.get("embed"),
+    )
+    ann_index_config = index_config.get("ann_index_config", {})
+    ann_index_config["metric_type"] = ann_index_config.get(
+        "metric_type", DistanceStrategy.DOT_PRODUCT
+    )
+    ann_index_config["index_type"] = ann_index_config.get("index_type", "FLAT")
+    index_config["ann_index_config"] = ann_index_config
+    return embeddings, index_config
