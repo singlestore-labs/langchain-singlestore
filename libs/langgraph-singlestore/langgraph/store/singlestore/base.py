@@ -47,6 +47,7 @@ from langgraph.store.base import (
     SearchOp,
     TTLConfig,
     ensure_embeddings,
+    get_text_at_path,
     tokenize_path,
 )
 
@@ -139,17 +140,49 @@ _ON_DUPLICATE_KEY_UPDATE_SQL = """
         ttl_minutes = VALUES(ttl_minutes)
 """
 
+_UPSERT_BASE_VECTOR_SQL = """
+    INSERT INTO store_vector
+    (prefix, `key`, field_name, embedding, created_at, updated_at)
+    VALUES """
+
+_ON_DUPLICATE_KEY_VECTOR_UPDATE_SQL = """
+    ON DUPLICATE KEY UPDATE
+        embedding = VALUES(embedding),
+        updated_at = CURRENT_TIMESTAMP
+"""
+
 _SELECT_BASE = """
     SELECT prefix, `key`, value, created_at, updated_at, expires_at, ttl_minutes
     FROM store WHERE (expires_at IS NULL OR expires_at > CURRENT_TIMESTAMP) AND
 """
 
-_REFRESH_TTL_SQL = """
+_REFRESH_TTL_SQL_BASE = """
     UPDATE store
     SET expires_at = DATE_ADD(NOW(), INTERVAL ttl_minutes MINUTE),
         updated_at = CURRENT_TIMESTAMP
     WHERE (expires_at IS NULL OR expires_at > CURRENT_TIMESTAMP) AND
 """
+
+_DELETE_EXPIRED_FROM_STORE = """
+    DELETE FROM store
+    WHERE expires_at IS NOT NULL AND expires_at <= NOW()
+"""
+
+_DELETE_EXPIRED_FROM_STORE_VECTOR = """
+    DELETE FROM store_vector LEFT JOIN store
+    ON store_vector.prefix = store.prefix
+    AND store_vector.`key` = store.`key`
+    WHERE store.prefix is NULL
+"""
+
+_DELETE_BASE_FROM_STORE = """
+    DELETE FROM store
+    WHERE prefix = %s AND `key` IN """
+
+
+_DELETE_BASE_FROM_STORE_VECTOR_BASE = """
+    DELETE FROM store_vector
+    WHERE prefix = %s AND `key` IN """
 
 
 def _safe_rollback(cur: Any) -> None:
@@ -355,7 +388,7 @@ class SingleStoreStore(BaseStore):
                     ttl_keys = [k for _, k in by_ns_ttl[namespace]]
                     ttl_placeholders = ",".join(["%s"] * len(ttl_keys))
                     cur.execute(
-                        f"{_REFRESH_TTL_SQL} prefix = %s "
+                        f"{_REFRESH_TTL_SQL_BASE} prefix = %s "
                         f"AND `key` IN ({ttl_placeholders})",
                         (namespace_text, *ttl_keys),
                     )
@@ -384,21 +417,40 @@ class SingleStoreStore(BaseStore):
 
         inserts: list[PutOp] = []
         deletes_by_ns: dict[tuple[str, ...], list[str]] = defaultdict(list)
+        inserted_by_ns: dict[tuple[str, ...], list[str]] = defaultdict(list)
         for op in dedupped.values():
             if op.value is None:
                 deletes_by_ns[op.namespace].append(op.key)
             else:
                 inserts.append(op)
+                if self.index_config:
+                    inserted_by_ns[op.namespace].append(op.key)
 
         for namespace, keys in deletes_by_ns.items():
             placeholders = ",".join(["%s"] * len(keys))
             cur.execute(
-                f"DELETE FROM store WHERE prefix = %s AND `key` IN ({placeholders})",
+                _DELETE_BASE_FROM_STORE + f"({placeholders})",
                 (_namespace_to_text(namespace), *keys),
             )
-
+            if self.index_config:
+                # Delete corresponding entries from the vector index table as well.
+                cur.execute(
+                    _DELETE_BASE_FROM_STORE_VECTOR_BASE + f"({placeholders})",
+                    (_namespace_to_text(namespace), *keys),
+                )
+        # Delete entries from the vector index table
+        # that correspond to newly inserted base entries.
+        for namespace, keys in inserted_by_ns.items():
+            placeholders = ",".join(["%s"] * len(keys))
+            cur.execute(
+                _DELETE_BASE_FROM_STORE_VECTOR_BASE + f"({placeholders})",
+                (_namespace_to_text(namespace), *keys),
+            )
         insert_values: list[Any] = []
         insert_placeholders: list[str] = []
+        insert_vector_key_values: list[tuple[str, str, str]] = []
+        embedding_requests: list[str] = []
+        insert_vector_placeholders: list[str] = []
         for op in inserts:
             insert_values.extend(
                 [
@@ -418,6 +470,46 @@ class SingleStoreStore(BaseStore):
                 insert_values.extend([ttl_minutes, int(round(ttl_minutes))])
             else:
                 insert_placeholders.append("(%s, %s, %s, NOW(), NOW(), NULL, NULL)")
+
+            if self.index_config and op.index is not False:
+                value = op.value
+                ns = _namespace_to_text(op.namespace)
+                k = op.key
+                if op.index is None:
+                    paths = cast(dict, self.index_config)["__tokenized_fields"]
+                else:
+                    paths = [(ix, tokenize_path(ix)) for ix in op.index]
+                for path, tokenized_path in paths:
+                    texts = get_text_at_path(value, tokenized_path)
+                    for i, text in enumerate(texts):
+                        pathname = f"{path}.{i}" if len(texts) > 1 else path
+                        insert_vector_placeholders.append(
+                            "(%s, %s, %s, JSON_ARRAY_PACK(%s), "
+                            "CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)"
+                        )
+                        insert_vector_key_values.append((ns, k, pathname))
+                        embedding_requests.append(text)
+        if embedding_requests:
+            if self.embeddings is None:
+                raise ValueError(
+                    "Embedding configuration is required for vector operations "
+                    "(for semantic search). Please provide an Embeddings when "
+                    f"initializing the {self.__class__.__name__}."
+                )
+            vector_embeddings = self.embeddings.embed_documents(embedding_requests)
+            insert_vector_values: list[Any] = []
+            for key_values, embedding in zip(
+                insert_vector_key_values, vector_embeddings
+            ):
+                insert_vector_values.extend(
+                    [*key_values, "[{}]".format(",".join(map(str, embedding)))]
+                )
+            cur.execute(
+                _UPSERT_BASE_VECTOR_SQL
+                + ",".join(insert_vector_placeholders)
+                + _ON_DUPLICATE_KEY_VECTOR_UPDATE_SQL,
+                tuple(insert_vector_values),
+            )
 
         if insert_placeholders:
             cur.execute(
@@ -462,7 +554,7 @@ class SingleStoreStore(BaseStore):
                         for row in cur.fetchall()
                     ]
                     cur.execute(
-                        f"{_REFRESH_TTL_SQL} {where_sql}",
+                        f"{_REFRESH_TTL_SQL_BASE} {where_sql}",
                         params,
                     )
                     cur.execute("COMMIT")
@@ -544,10 +636,9 @@ class SingleStoreStore(BaseStore):
             # ``<=`` mirrors the read-path check (``expires_at > NOW()`` means
             # still valid); a row with ``expires_at == NOW()`` is already
             # invisible to reads and must be sweepable.
-            cur.execute(
-                "DELETE FROM store "
-                "WHERE expires_at IS NOT NULL AND expires_at <= NOW()"
-            )
+            cur.execute(_DELETE_EXPIRED_FROM_STORE)
+            if self.index_config:
+                cur.execute(_DELETE_EXPIRED_FROM_STORE_VECTOR)
             deleted_count = cur.rowcount
             return deleted_count
 
