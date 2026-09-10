@@ -107,10 +107,24 @@ MIGRATIONS: Sequence[str] = [
     END;""",
 ]
 
+
 # --- SQL fragments -----------------------------------------------------------
 # ``JSON_EXTRACT_JSON`` returns a JSON value that compares directly to a JSON
 # literal; ``JSON_EXTRACT_STRING`` returns the unquoted string form used for
 # ordering/comparison of scalar fields.
+
+_VECTOR_INDEX_TABLE_SQL = """
+    CREATE TABLE IF NOT EXISTS store_vector (
+        prefix TEXT NOT NULL,
+        `key` TEXT NOT NULL,
+        field_name TEXT NOT NULL,
+        embedding VECTOR({}, F32) NOT NULL,
+        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+        updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+        PRIMARY KEY (prefix(255), `key`(255), field_name(255)),
+        INDEX store_vector_prefix_idx (prefix(255), `key`(255)),
+        VECTOR INDEX store_vector_embedding_idx (embedding) INDEX_OPTIONS '{}'
+    );"""
 
 _UPSERT_BASE_SQL = """
     INSERT INTO store
@@ -236,12 +250,29 @@ class SingleStoreStore(BaseStore):
                 except Exception as exc:
                     logger.error("Failed to apply store migration %s: %s", v, exc)
                     raise
+            if self.index_config:
+                try:
+                    cur.execute(
+                        _VECTOR_INDEX_TABLE_SQL.format(
+                            int(self.index_config.get("dims", 0)),
+                            json.dumps(self.index_config.get("ann_index_config")),
+                        ),
+                    )
+                except Exception as exc:
+                    logger.error("Failed to create vector index table: %s", exc)
+                    raise
 
     def close(self) -> None:
         """Release resources; safe to call multiple times.
-
         No-op on caller-owned connections/pools.
         """
+        try:
+            if hasattr(self, "_ttl_stop_event") and hasattr(
+                self, "_ttl_sweeper_thread"
+            ):
+                self.stop_ttl_sweeper(timeout=0.1)
+        except Exception as exc:
+            logger.error("Failed to stop TTL sweeper: %s", exc)
         self.connection_pool.dispose()
 
     # ---------------------------------------------------------------- batch
