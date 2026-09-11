@@ -844,7 +844,12 @@ class TestSearchWithQueryAcrossIndexConfigs:
                 (("docs", "public"), "sports-1"),
                 (("docs", "public"), "sports-2"),
             }
-            assert got[0].score == 1.0 and got[1].score == 1.0
+            expected_score = (
+                0
+                if ann.get("metric_type") == DistanceStrategy.EUCLIDEAN_DISTANCE
+                else 1.0
+            )
+            assert got[0].score == expected_score and got[1].score == expected_score
         finally:
             store.close()
 

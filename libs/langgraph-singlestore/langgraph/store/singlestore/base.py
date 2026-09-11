@@ -23,13 +23,13 @@ from typing import Any, Iterable, Literal, Optional, Sequence, cast
 from singlestore_langchain_core import (
     LANGGRAPH_CONNECTOR_NAME,
     ANNIndexConfig,
+    DistanceStrategy,
     FilterTypedDict,
     _parse_filter,
     compute_connector_version,
     create_connection_pool,
     set_connector_attributes,
 )
-from singlestore_langchain_core._utils import DistanceStrategy
 from singlestoredb.connection import Connection
 from sqlalchemy.pool import Pool
 
@@ -164,7 +164,7 @@ _SELECT_WITH_VECTOR_SEARCH_SQL = """
     SELECT store.prefix as prefix, store.`key` as `key`, store.value as value,
     store.created_at as created_at, store.updated_at as updated_at,
     store.expires_at as expires_at, store.ttl_minutes as ttl_minutes,
-    MAX(DOT_PRODUCT(vector.embedding, JSON_ARRAY_PACK(%s))) as score
+    {}({}(vector.embedding, JSON_ARRAY_PACK(%s))) as score
     FROM store_vector AS vector JOIN store ON
         vector.prefix = store.prefix AND vector.`key` = store.`key`
     WHERE (store.expires_at IS NULL OR store.expires_at > CURRENT_TIMESTAMP) AND
@@ -176,7 +176,8 @@ _GROUP_BY_VECTOR_SEARCH_SQL = """
 """
 
 _ORDER_BY_VECTOR_SEARCH_SQL = """
-    ORDER BY score DESC, store.prefix, store.`key` LIMIT %s OFFSET %s
+    ORDER BY score {}, store.updated_at DESC, store.prefix,
+    store.`key` LIMIT %s OFFSET %s
 """
 
 _REFRESH_TTL_SQL_BASE = """
@@ -208,6 +209,16 @@ _DELETE_BASE_FROM_STORE_VECTOR_BASE = """
     WHERE prefix = %s AND `key` IN """
 
 _FLUSH_VECTOR_STORE_SQL = "OPTIMIZE TABLE store_vector FLUSH;"
+
+AGGREGATE_FUNCTIONS_SQL: dict[DistanceStrategy, str] = {
+    DistanceStrategy.DOT_PRODUCT: "MAX",
+    DistanceStrategy.EUCLIDEAN_DISTANCE: "MIN",
+}
+
+SCORE_ORDER_DIRECTION: dict[DistanceStrategy, str] = {
+    DistanceStrategy.DOT_PRODUCT: "DESC",
+    DistanceStrategy.EUCLIDEAN_DISTANCE: "",
+}
 
 
 def _safe_rollback(cur: Any) -> None:
@@ -572,7 +583,11 @@ class SingleStoreStore(BaseStore):
                         "when initializing the store."
                     )
                 embed_query = self.embeddings.embed_query(op.query)
-                base_sql = _SELECT_WITH_VECTOR_SEARCH_SQL
+                metric_type = self.index_config["ann_index_config"]["metric_type"]
+                base_sql = _SELECT_WITH_VECTOR_SEARCH_SQL.format(
+                    AGGREGATE_FUNCTIONS_SQL[metric_type],
+                    metric_type.value,
+                )
                 select_params.append(f"[{','.join(map(str, embed_query))}]")
             else:
                 base_sql = _SELECT_BASE
@@ -583,10 +598,10 @@ class SingleStoreStore(BaseStore):
             where_sql = where_sql or "TRUE"
             base_sql = f"{base_sql} {where_sql}"
             if op.query:
-                base_sql = (
-                    f"{base_sql} {_GROUP_BY_VECTOR_SEARCH_SQL}"
-                    f" {_ORDER_BY_VECTOR_SEARCH_SQL}"
+                order_by_sql = _ORDER_BY_VECTOR_SEARCH_SQL.format(
+                    SCORE_ORDER_DIRECTION[metric_type]
                 )
+                base_sql = f"{base_sql} {_GROUP_BY_VECTOR_SEARCH_SQL} {order_by_sql}"
             else:
                 base_sql = f"{base_sql} {_ORDER_BY_BASE}"
             if op.refresh_ttl:
