@@ -5,7 +5,7 @@ This monorepo ships three Python packages:
 | Package | Path | Purpose |
 | --- | --- | --- |
 | [`langchain-singlestore`](libs/langchain-singlestore) | `libs/langchain-singlestore/` | LangChain integrations: `SingleStoreVectorStore`, `SingleStoreSemanticCache`, `SingleStoreChatMessageHistory`, `SingleStoreLoader`, `SingleStoreSQLDatabaseRetriever` / `SingleStoreSQLDatabaseChain`. |
-| [`langgraph-singlestore`](libs/langgraph-singlestore) | `libs/langgraph-singlestore/` | LangGraph integrations: `SingleStoreSaver` (checkpointing) and `SingleStoreStore` (long-term memory). *Scaffolding — implementations pending.* |
+| [`langgraph-singlestore`](libs/langgraph-singlestore) | `libs/langgraph-singlestore/` | LangGraph integrations: `SingleStoreStore` (long-term memory, with optional vector search and TTL) plus `SingleStoreSaver` scaffolding for checkpointing. |
 | [`singlestore-langchain-core`](libs/singlestore-langchain-core) | `libs/singlestore-langchain-core/` | Internal shared package: connection helpers, SingleStore enums, and the metadata filter DSL. Depended on by the two packages above. |
 
 ## Layout
@@ -33,7 +33,14 @@ make lint
 make test
 make -C libs/langchain-singlestore lint
 make -C libs/langchain-singlestore integration_tests
+make -C libs/langgraph-singlestore integration_tests
 ```
+
+Integration suites boot a SingleStore container via
+`singlestoredb.server.docker.start()` in `conftest.py`, so a local Docker
+daemon is the only prerequisite. CI runs unit tests for all three packages
+and integration tests for `langchain-singlestore` and `langgraph-singlestore`
+on every pull request; see [.github/workflows/main.yml](.github/workflows/main.yml).
 
 See each package's own README for user-facing documentation.
 
@@ -41,4 +48,6 @@ See each package's own README for user-facing documentation.
 
 - `langchain-singlestore`: stable, released on PyPI.
 - `singlestore-langchain-core`: 0.x, internal.
-- `langgraph-singlestore`: pre-release scaffolding.
+- `langgraph-singlestore`: pre-release. `SingleStoreStore` (sync + async) is
+  implemented; `SingleStoreSaver` is scaffolding and raises
+  `NotImplementedError`.

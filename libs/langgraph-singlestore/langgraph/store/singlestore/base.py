@@ -484,6 +484,7 @@ class SingleStoreStore(BaseStore):
                 _DELETE_BASE_FROM_STORE_VECTOR_BASE + f"({placeholders})",
                 (_namespace_to_text(namespace), *keys),
             )
+            is_updated_vector_index = True
         insert_values: list[Any] = []
         insert_placeholders: list[str] = []
         insert_vector_key_values: list[tuple[str, str, str]] = []
@@ -730,9 +731,10 @@ class SingleStoreStore(BaseStore):
             # still valid); a row with ``expires_at == NOW()`` is already
             # invisible to reads and must be sweepable.
             cur.execute(_DELETE_EXPIRED_FROM_STORE)
+            deleted_count = cur.rowcount
             if self.index_config:
                 cur.execute(_DELETE_EXPIRED_FROM_STORE_VECTOR)
-            deleted_count = cur.rowcount
+                cur.execute(_FLUSH_VECTOR_STORE_SQL)
             return deleted_count
 
     def start_ttl_sweeper(
