@@ -773,6 +773,36 @@ class TestSearchWithQueryTTL:
         finally:
             store.close()
 
+    def test_refresh_ttl_true_with_zero_matches_does_not_error(
+        self,
+        connection_parameters: ConnectionParameters,
+    ) -> None:
+        """The vector-search + ``refresh_ttl`` path collects ``(prefix, key)``
+        from the result set and issues a per-prefix UPDATE. When the search
+        returns nothing the collection is empty; the code must skip the
+        refresh loop cleanly instead of executing a malformed
+        ``key IN ()`` statement."""
+        embed = _TopicEmbeddings()
+        store = SingleStoreStore(
+            index=_make_index_config(embed, fields=["topic"]),
+            **connection_parameters.as_kwargs(),
+        )
+        try:
+            store.setup()
+            _seed(store)
+
+            got = _search(
+                store,
+                SearchOp(
+                    namespace_prefix=("does-not-exist",),
+                    query="sports",
+                    refresh_ttl=True,
+                ),
+            )
+            assert got == []
+        finally:
+            store.close()
+
 
 # --- ANN index configurations ------------------------------------------------
 

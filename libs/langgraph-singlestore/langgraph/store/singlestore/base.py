@@ -193,10 +193,10 @@ _DELETE_EXPIRED_FROM_STORE = """
 """
 
 _DELETE_EXPIRED_FROM_STORE_VECTOR = """
-    DELETE FROM store_vector LEFT JOIN store
+    DELETE store_vector FROM store_vector LEFT JOIN store
     ON store_vector.prefix = store.prefix
     AND store_vector.`key` = store.`key`
-    WHERE store.prefix is NULL
+    WHERE store.prefix IS NULL
 """
 
 _DELETE_BASE_FROM_STORE = """

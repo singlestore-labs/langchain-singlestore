@@ -491,3 +491,81 @@ class TestPutOpsMissingEmbeddingsConfig:
                 store.batch([PutOp(("docs",), "doc-1", {"summary": "hello"})])
         finally:
             store.close()
+
+
+class TestSweepTTLWithVectorIndex:
+    """``sweep_ttl`` must also purge ``store_vector`` rows whose base rows
+    have expired. The base sweep tests use a non-vector store, so this is
+    the only place the ``_DELETE_EXPIRED_FROM_STORE_VECTOR`` branch runs."""
+
+    def test_sweep_ttl_deletes_vector_rows_for_expired_items(
+        self, connection_parameters: ConnectionParameters
+    ) -> None:
+        embed = _CountingEmbeddings(dims=8)
+        store = SingleStoreStore(
+            index=_make_index_config(embed, dims=8, fields=["summary"]),
+            **connection_parameters.as_kwargs(),
+        )
+        try:
+            store.setup()
+            store.batch(
+                [
+                    PutOp(("docs",), "keep", {"summary": "still here"}),
+                    PutOp(
+                        ("docs",),
+                        "gone",
+                        {"summary": "will expire"},
+                        ttl=1.0,
+                    ),
+                ]
+            )
+            assert {r[1] for r in _fetch_vector_rows(connection_parameters)} == {
+                "keep",
+                "gone",
+            }
+
+            # Force ``gone`` past its ``expires_at`` and sweep.
+            conn = connect(**connection_parameters.as_kwargs())
+            try:
+                with closing(conn.cursor()) as cur:
+                    cur.execute(
+                        "UPDATE store SET expires_at = DATE_SUB(NOW(), "
+                        "INTERVAL 1 MINUTE) WHERE `key` = %s",
+                        ("gone",),
+                    )
+            finally:
+                conn.close()
+
+            deleted = store.sweep_ttl()
+            assert deleted >= 1
+
+            surviving_keys = {r[1] for r in _fetch_vector_rows(connection_parameters)}
+            assert surviving_keys == {"keep"}
+            assert _count_store_rows(connection_parameters) == 1
+        finally:
+            store.close()
+
+    def test_sweep_ttl_on_vector_store_with_nothing_expired_is_noop(
+        self, connection_parameters: ConnectionParameters
+    ) -> None:
+        embed = _CountingEmbeddings(dims=8)
+        store = SingleStoreStore(
+            index=_make_index_config(embed, dims=8, fields=["summary"]),
+            **connection_parameters.as_kwargs(),
+        )
+        try:
+            store.setup()
+            store.batch(
+                [
+                    PutOp(("docs",), "a", {"summary": "one"}),
+                    PutOp(("docs",), "b", {"summary": "two"}, ttl=60.0),
+                ]
+            )
+            before_vector = _fetch_vector_rows(connection_parameters)
+            before_store = _count_store_rows(connection_parameters)
+
+            assert store.sweep_ttl() == 0
+            assert _fetch_vector_rows(connection_parameters) == before_vector
+            assert _count_store_rows(connection_parameters) == before_store
+        finally:
+            store.close()
