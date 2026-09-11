@@ -156,6 +156,29 @@ _SELECT_BASE = """
     FROM store WHERE (expires_at IS NULL OR expires_at > CURRENT_TIMESTAMP) AND
 """
 
+_ORDER_BY_BASE = """
+    ORDER BY updated_at DESC, prefix, `key` LIMIT %s OFFSET %s
+"""
+
+_SELECT_WITH_VECTOR_SEARCH_SQL = """
+    SELECT store.prefix as prefix, store.`key` as `key`, store.value as value,
+    store.created_at as created_at, store.updated_at as updated_at,
+    store.expires_at as expires_at, store.ttl_minutes as ttl_minutes,
+    MAX(DOT_PRODUCT(vector.embedding, JSON_ARRAY_PACK(%s))) as score
+    FROM store_vector AS vector JOIN store ON
+        vector.prefix = store.prefix AND vector.`key` = store.`key`
+    WHERE (store.expires_at IS NULL OR store.expires_at > CURRENT_TIMESTAMP) AND
+"""
+
+_GROUP_BY_VECTOR_SEARCH_SQL = """
+    GROUP BY store.prefix, store.`key`, store.value, store.created_at,
+    store.updated_at, store.expires_at, store.ttl_minutes
+"""
+
+_ORDER_BY_VECTOR_SEARCH_SQL = """
+    ORDER BY score DESC, store.prefix, store.`key` LIMIT %s OFFSET %s
+"""
+
 _REFRESH_TTL_SQL_BASE = """
     UPDATE store
     SET expires_at = DATE_ADD(NOW(), INTERVAL ttl_minutes MINUTE),
@@ -183,6 +206,8 @@ _DELETE_BASE_FROM_STORE = """
 _DELETE_BASE_FROM_STORE_VECTOR_BASE = """
     DELETE FROM store_vector
     WHERE prefix = %s AND `key` IN """
+
+_FLUSH_VECTOR_STORE_SQL = "OPTIMIZE TABLE store_vector FLUSH;"
 
 
 def _safe_rollback(cur: Any) -> None:
@@ -415,6 +440,7 @@ class SingleStoreStore(BaseStore):
         for _, op in put_ops:
             dedupped[(op.namespace, op.key)] = op
 
+        is_updated_vector_index: bool = False
         inserts: list[PutOp] = []
         deletes_by_ns: dict[tuple[str, ...], list[str]] = defaultdict(list)
         inserted_by_ns: dict[tuple[str, ...], list[str]] = defaultdict(list)
@@ -434,6 +460,7 @@ class SingleStoreStore(BaseStore):
             )
             if self.index_config:
                 # Delete corresponding entries from the vector index table as well.
+                is_updated_vector_index = True
                 cur.execute(
                     _DELETE_BASE_FROM_STORE_VECTOR_BASE + f"({placeholders})",
                     (_namespace_to_text(namespace), *keys),
@@ -510,6 +537,7 @@ class SingleStoreStore(BaseStore):
                 + _ON_DUPLICATE_KEY_VECTOR_UPDATE_SQL,
                 tuple(insert_vector_values),
             )
+            is_updated_vector_index = True
 
         if insert_placeholders:
             cur.execute(
@@ -519,6 +547,9 @@ class SingleStoreStore(BaseStore):
                 tuple(insert_values),
             )
 
+        if is_updated_vector_index:
+            cur.execute(_FLUSH_VECTOR_STORE_SQL)
+
     def _batch_search_ops(
         self,
         search_ops: "Sequence[tuple[int, SearchOp]]",
@@ -526,26 +557,74 @@ class SingleStoreStore(BaseStore):
         cur: Any,
     ) -> None:
         for idx, op in search_ops:
+            select_params: list[Any] = []
             if op.query:
-                raise NotImplementedError(
-                    "Vector search is not yet implemented in this draft. "
-                    "Track progress in libs/langgraph-singlestore/CHANGELOG.md."
-                )
-            where_sql, params = _search_where(op)
+                if not self.index_config:
+                    raise ValueError(
+                        "Index configuration is required for search operations. "
+                        "Please provide an index configuration "
+                        "when initializing the store."
+                    )
+                if not self.embeddings:
+                    raise ValueError(
+                        "Embeddings are required for search operations. "
+                        "Please provide embeddings "
+                        "when initializing the store."
+                    )
+                embed_query = self.embeddings.embed_query(op.query)
+                base_sql = _SELECT_WITH_VECTOR_SEARCH_SQL
+                select_params.append(f"[{','.join(map(str, embed_query))}]")
+            else:
+                base_sql = _SELECT_BASE
+
+            where_sql, where_params = _search_where(op)
             # ``_SELECT_BASE`` / ``_REFRESH_TTL_SQL`` end with an unconditional
             # ``AND``; supply a truthy tail when the op has no prefix/filter.
             where_sql = where_sql or "TRUE"
+            base_sql = f"{base_sql} {where_sql}"
+            if op.query:
+                base_sql = (
+                    f"{base_sql} {_GROUP_BY_VECTOR_SEARCH_SQL}"
+                    f" {_ORDER_BY_VECTOR_SEARCH_SQL}"
+                )
+            else:
+                base_sql = f"{base_sql} {_ORDER_BY_BASE}"
             if op.refresh_ttl:
+                if op.query:
+                    # SingleStore rejects ``FOR UPDATE`` on distributed JOINs
+                    # (error 1706), so the vector-search path cannot lock the
+                    # SELECT the way the base path does. Instead, run the
+                    # ranked SELECT normally and refresh TTLs on the exact
+                    # ``(prefix, key)`` pairs returned.
+                    cur.execute(
+                        f"{base_sql}",
+                        (*select_params, *where_params, op.limit, op.offset),
+                    )
+                    fetched = list(cur.fetchall())
+                    results[idx] = [
+                        _row_to_search_item(
+                            _text_to_namespace(_row_get(row, 0, "prefix")), row
+                        )
+                        for row in fetched
+                    ]
+                    by_prefix: dict[str, list[str]] = defaultdict(list)
+                    for row in fetched:
+                        by_prefix[_row_get(row, 0, "prefix")].append(
+                            _row_get(row, 1, "key")
+                        )
+                    for prefix, keys in by_prefix.items():
+                        placeholders = ",".join(["%s"] * len(keys))
+                        cur.execute(
+                            f"{_REFRESH_TTL_SQL_BASE} prefix = %s "
+                            f"AND `key` IN ({placeholders})",
+                            (prefix, *keys),
+                        )
+                    continue
                 cur.execute("BEGIN")
                 try:
                     cur.execute(
-                        f"{_SELECT_BASE} {where_sql} "
-                        # ``prefix``/``key`` tiebreaker makes pagination
-                        # deterministic when many rows share ``updated_at``
-                        # (TIMESTAMP is 1s).
-                        f"ORDER BY updated_at DESC, prefix, `key` LIMIT %s OFFSET %s"
-                        " FOR UPDATE",
-                        (*params, op.limit, op.offset),
+                        f"{base_sql} FOR UPDATE",
+                        (*select_params, *where_params, op.limit, op.offset),
                     )
                     results[idx] = [
                         _row_to_search_item(
@@ -555,7 +634,7 @@ class SingleStoreStore(BaseStore):
                     ]
                     cur.execute(
                         f"{_REFRESH_TTL_SQL_BASE} {where_sql}",
-                        params,
+                        where_params,
                     )
                     cur.execute("COMMIT")
                 except BaseException:
@@ -565,9 +644,8 @@ class SingleStoreStore(BaseStore):
                     raise
             else:
                 cur.execute(
-                    f"{_SELECT_BASE} {where_sql} "
-                    f"ORDER BY updated_at DESC, prefix, `key` LIMIT %s OFFSET %s",
-                    (*params, op.limit, op.offset),
+                    f"{base_sql}",
+                    (*select_params, *where_params, op.limit, op.offset),
                 )
                 results[idx] = [
                     _row_to_search_item(
@@ -854,14 +932,16 @@ def _namespace_for_suffix_search(namespace: tuple[str, ...]) -> str:
     )
 
 
-def _namespace_for_exact_search(namespace: tuple[str, ...]) -> tuple[str, str]:
+def _namespace_for_exact_search(
+    namespace: tuple[str, ...], column: str = "prefix"
+) -> tuple[str, str]:
     if "*" in namespace:
         return (
-            "prefix LIKE %s",
+            f"{column} LIKE %s",
             _namespace_with_wildcard_for_search(namespace),
         )
     return (
-        "prefix = %s",
+        f"{column} = %s",
         _namespace_to_text(namespace),
     )
 
@@ -894,11 +974,15 @@ def _search_where(op: SearchOp) -> tuple[str, list[Any]]:
     clauses: list[str] = []
     params: list[Any] = []
     if op.namespace_prefix:
+        # Always qualify with ``store.`` so the same WHERE clause works both
+        # against ``FROM store`` (base search) and the JOIN with
+        # ``store_vector`` used by the query path, where a bare ``prefix``
+        # would be ambiguous.
         exact_filter, exact_match_param = _namespace_for_exact_search(
-            op.namespace_prefix
+            op.namespace_prefix, column="store.prefix"
         )
         prefix = _namespace_for_prefix_search(op.namespace_prefix)
-        clauses.append(f"(prefix LIKE %s OR {exact_filter})")
+        clauses.append(f"(store.prefix LIKE %s OR {exact_filter})")
         params.extend([prefix, exact_match_param])
     if op.filter and len(op.filter) > 0:
         adjusted_filter = cast(
@@ -906,7 +990,7 @@ def _search_where(op: SearchOp) -> tuple[str, list[Any]]:
             {"$and": [{k: v} for k, v in op.filter.items()]},
         )
         filter_clause, filter_params = _parse_filter(
-            filter_dict=adjusted_filter, metadata_field="value"
+            filter_dict=adjusted_filter, metadata_field="store.value"
         )
         clauses.append(f"({filter_clause})")
         params.extend(filter_params)
@@ -943,12 +1027,20 @@ def _row_to_search_item(namespace: tuple[str, ...], row: Any) -> SearchItem:
     value = _row_get(row, 2, "value")
     if not isinstance(value, dict):
         value = json.loads(value)
+    # ``score`` is only present on vector-search rows; the base SELECT has no
+    # such column so we fall back to ``None``.
+    score: Any = None
+    if isinstance(row, dict):
+        score = row.get("score")
+    elif len(row) > 7:
+        score = row[7]
     return SearchItem(
         namespace=namespace,
         key=_row_get(row, 1, "key"),
         value=value,
         created_at=_row_get(row, 3, "created_at"),
         updated_at=_row_get(row, 4, "updated_at"),
+        score=float(score) if score is not None else None,
     )
 
 
