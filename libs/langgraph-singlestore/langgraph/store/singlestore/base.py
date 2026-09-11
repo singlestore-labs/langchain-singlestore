@@ -18,16 +18,16 @@ import json
 import logging
 import threading
 from collections import defaultdict
-from typing import Any, Iterable, Optional, Sequence, cast
+from typing import Any, Iterable, Literal, Optional, Sequence, cast
 
 from singlestore_langchain_core import (
+    LANGGRAPH_CONNECTOR_NAME,
+    ANNIndexConfig,
+    DistanceStrategy,
     FilterTypedDict,
     _parse_filter,
-    create_connection_pool,
-)
-from singlestore_langchain_core._utils import (
-    LANGGRAPH_CONNECTOR_NAME,
     compute_connector_version,
+    create_connection_pool,
     set_connector_attributes,
 )
 from singlestoredb.connection import Connection
@@ -35,7 +35,9 @@ from sqlalchemy.pool import Pool
 
 from langgraph.store.base import (
     BaseStore,
+    Embeddings,
     GetOp,
+    IndexConfig,
     Item,
     ListNamespacesOp,
     Op,
@@ -44,6 +46,9 @@ from langgraph.store.base import (
     SearchItem,
     SearchOp,
     TTLConfig,
+    ensure_embeddings,
+    get_text_at_path,
+    tokenize_path,
 )
 
 logger = logging.getLogger(__name__)
@@ -103,10 +108,24 @@ MIGRATIONS: Sequence[str] = [
     END;""",
 ]
 
+
 # --- SQL fragments -----------------------------------------------------------
 # ``JSON_EXTRACT_JSON`` returns a JSON value that compares directly to a JSON
 # literal; ``JSON_EXTRACT_STRING`` returns the unquoted string form used for
 # ordering/comparison of scalar fields.
+
+_VECTOR_INDEX_TABLE_SQL = """
+    CREATE TABLE IF NOT EXISTS store_vector (
+        prefix TEXT NOT NULL,
+        `key` TEXT NOT NULL,
+        field_name TEXT NOT NULL,
+        embedding VECTOR({}, F32) NOT NULL,
+        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+        updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+        PRIMARY KEY (prefix(255), `key`(255), field_name(255)),
+        INDEX store_vector_prefix_idx (prefix(255), `key`(255)),
+        VECTOR INDEX store_vector_embedding_idx (embedding) INDEX_OPTIONS '{}'
+    );"""
 
 _UPSERT_BASE_SQL = """
     INSERT INTO store
@@ -121,17 +140,85 @@ _ON_DUPLICATE_KEY_UPDATE_SQL = """
         ttl_minutes = VALUES(ttl_minutes)
 """
 
+_UPSERT_BASE_VECTOR_SQL = """
+    INSERT INTO store_vector
+    (prefix, `key`, field_name, embedding, created_at, updated_at)
+    VALUES """
+
+_ON_DUPLICATE_KEY_VECTOR_UPDATE_SQL = """
+    ON DUPLICATE KEY UPDATE
+        embedding = VALUES(embedding),
+        updated_at = CURRENT_TIMESTAMP
+"""
+
 _SELECT_BASE = """
     SELECT prefix, `key`, value, created_at, updated_at, expires_at, ttl_minutes
     FROM store WHERE (expires_at IS NULL OR expires_at > CURRENT_TIMESTAMP) AND
 """
 
-_REFRESH_TTL_SQL = """
+_ORDER_BY_BASE = """
+    ORDER BY updated_at DESC, prefix, `key` LIMIT %s OFFSET %s
+"""
+
+_SELECT_WITH_VECTOR_SEARCH_SQL = """
+    SELECT store.prefix as prefix, store.`key` as `key`, store.value as value,
+    store.created_at as created_at, store.updated_at as updated_at,
+    store.expires_at as expires_at, store.ttl_minutes as ttl_minutes,
+    {}({}(vector.embedding, JSON_ARRAY_PACK(%s))) as score
+    FROM store_vector AS vector JOIN store ON
+        vector.prefix = store.prefix AND vector.`key` = store.`key`
+    WHERE (store.expires_at IS NULL OR store.expires_at > CURRENT_TIMESTAMP) AND
+"""
+
+_GROUP_BY_VECTOR_SEARCH_SQL = """
+    GROUP BY store.prefix, store.`key`, store.value, store.created_at,
+    store.updated_at, store.expires_at, store.ttl_minutes
+"""
+
+_ORDER_BY_VECTOR_SEARCH_SQL = """
+    ORDER BY score {}, store.updated_at DESC, store.prefix,
+    store.`key` LIMIT %s OFFSET %s
+"""
+
+_REFRESH_TTL_SQL_BASE = """
     UPDATE store
     SET expires_at = DATE_ADD(NOW(), INTERVAL ttl_minutes MINUTE),
         updated_at = CURRENT_TIMESTAMP
     WHERE (expires_at IS NULL OR expires_at > CURRENT_TIMESTAMP) AND
 """
+
+_DELETE_EXPIRED_FROM_STORE = """
+    DELETE FROM store
+    WHERE expires_at IS NOT NULL AND expires_at <= NOW()
+"""
+
+_DELETE_EXPIRED_FROM_STORE_VECTOR = """
+    DELETE store_vector FROM store_vector LEFT JOIN store
+    ON store_vector.prefix = store.prefix
+    AND store_vector.`key` = store.`key`
+    WHERE store.prefix IS NULL
+"""
+
+_DELETE_BASE_FROM_STORE = """
+    DELETE FROM store
+    WHERE prefix = %s AND `key` IN """
+
+
+_DELETE_BASE_FROM_STORE_VECTOR_BASE = """
+    DELETE FROM store_vector
+    WHERE prefix = %s AND `key` IN """
+
+_FLUSH_VECTOR_STORE_SQL = "OPTIMIZE TABLE store_vector FLUSH;"
+
+AGGREGATE_FUNCTIONS_SQL: dict[DistanceStrategy, str] = {
+    DistanceStrategy.DOT_PRODUCT: "MAX",
+    DistanceStrategy.EUCLIDEAN_DISTANCE: "MIN",
+}
+
+SCORE_ORDER_DIRECTION: dict[DistanceStrategy, str] = {
+    DistanceStrategy.DOT_PRODUCT: "DESC",
+    DistanceStrategy.EUCLIDEAN_DISTANCE: "",
+}
 
 
 def _safe_rollback(cur: Any) -> None:
@@ -141,6 +228,12 @@ def _safe_rollback(cur: Any) -> None:
         cur.execute("ROLLBACK")
     except Exception:
         logger.exception("ROLLBACK failed after transactional operation error")
+
+
+class SingleStoreIndexConfig(IndexConfig):
+    ann_index_config: ANNIndexConfig
+    _tokenized_fields: list[tuple[str, Literal["$"] | list[str]]]
+    _estimated_num_vectors: int
 
 
 class SingleStoreStore(BaseStore):
@@ -177,6 +270,7 @@ class SingleStoreStore(BaseStore):
         pool_size: int = 5,
         max_overflow: int = 10,
         timeout: float = 30,
+        index: Optional[SingleStoreIndexConfig] = None,
         ttl_config: Optional[TTLConfig] = None,
         **connection_kwargs: Any,
     ) -> None:
@@ -195,6 +289,11 @@ class SingleStoreStore(BaseStore):
             timeout=timeout,
             connection_kwargs=self.connection_kwargs,
         )
+        self.index_config = index
+        if self.index_config:
+            self.embeddings, self.index_config = _ensure_index_config(self.index_config)
+        else:
+            self.embeddings = None
         self.ttl_config = ttl_config
         self._ttl_sweeper_thread: Optional[threading.Thread] = None
         self._ttl_sweeper_future: Optional[concurrent.futures.Future[None]] = None
@@ -220,12 +319,29 @@ class SingleStoreStore(BaseStore):
                 except Exception as exc:
                     logger.error("Failed to apply store migration %s: %s", v, exc)
                     raise
+            if self.index_config:
+                try:
+                    cur.execute(
+                        _VECTOR_INDEX_TABLE_SQL.format(
+                            int(self.index_config.get("dims", 0)),
+                            json.dumps(self.index_config.get("ann_index_config")),
+                        ),
+                    )
+                except Exception as exc:
+                    logger.error("Failed to create vector index table: %s", exc)
+                    raise
 
     def close(self) -> None:
         """Release resources; safe to call multiple times.
-
         No-op on caller-owned connections/pools.
         """
+        try:
+            if hasattr(self, "_ttl_stop_event") and hasattr(
+                self, "_ttl_sweeper_thread"
+            ):
+                self.stop_ttl_sweeper(timeout=0.1)
+        except Exception as exc:
+            logger.error("Failed to stop TTL sweeper: %s", exc)
         self.connection_pool.dispose()
 
     # ---------------------------------------------------------------- batch
@@ -308,7 +424,7 @@ class SingleStoreStore(BaseStore):
                     ttl_keys = [k for _, k in by_ns_ttl[namespace]]
                     ttl_placeholders = ",".join(["%s"] * len(ttl_keys))
                     cur.execute(
-                        f"{_REFRESH_TTL_SQL} prefix = %s "
+                        f"{_REFRESH_TTL_SQL_BASE} prefix = %s "
                         f"AND `key` IN ({ttl_placeholders})",
                         (namespace_text, *ttl_keys),
                     )
@@ -335,23 +451,45 @@ class SingleStoreStore(BaseStore):
         for _, op in put_ops:
             dedupped[(op.namespace, op.key)] = op
 
+        is_updated_vector_index: bool = False
         inserts: list[PutOp] = []
         deletes_by_ns: dict[tuple[str, ...], list[str]] = defaultdict(list)
+        inserted_by_ns: dict[tuple[str, ...], list[str]] = defaultdict(list)
         for op in dedupped.values():
             if op.value is None:
                 deletes_by_ns[op.namespace].append(op.key)
             else:
                 inserts.append(op)
+                if self.index_config:
+                    inserted_by_ns[op.namespace].append(op.key)
 
         for namespace, keys in deletes_by_ns.items():
             placeholders = ",".join(["%s"] * len(keys))
             cur.execute(
-                f"DELETE FROM store WHERE prefix = %s AND `key` IN ({placeholders})",
+                _DELETE_BASE_FROM_STORE + f"({placeholders})",
                 (_namespace_to_text(namespace), *keys),
             )
-
+            if self.index_config:
+                # Delete corresponding entries from the vector index table as well.
+                is_updated_vector_index = True
+                cur.execute(
+                    _DELETE_BASE_FROM_STORE_VECTOR_BASE + f"({placeholders})",
+                    (_namespace_to_text(namespace), *keys),
+                )
+        # Delete entries from the vector index table
+        # that correspond to newly inserted base entries.
+        for namespace, keys in inserted_by_ns.items():
+            placeholders = ",".join(["%s"] * len(keys))
+            cur.execute(
+                _DELETE_BASE_FROM_STORE_VECTOR_BASE + f"({placeholders})",
+                (_namespace_to_text(namespace), *keys),
+            )
+            is_updated_vector_index = True
         insert_values: list[Any] = []
         insert_placeholders: list[str] = []
+        insert_vector_key_values: list[tuple[str, str, str]] = []
+        embedding_requests: list[str] = []
+        insert_vector_placeholders: list[str] = []
         for op in inserts:
             insert_values.extend(
                 [
@@ -372,6 +510,47 @@ class SingleStoreStore(BaseStore):
             else:
                 insert_placeholders.append("(%s, %s, %s, NOW(), NOW(), NULL, NULL)")
 
+            if self.index_config and op.index is not False:
+                value = op.value
+                ns = _namespace_to_text(op.namespace)
+                k = op.key
+                if op.index is None:
+                    paths = cast(dict, self.index_config)["__tokenized_fields"]
+                else:
+                    paths = [(ix, tokenize_path(ix)) for ix in op.index]
+                for path, tokenized_path in paths:
+                    texts = get_text_at_path(value, tokenized_path)
+                    for i, text in enumerate(texts):
+                        pathname = f"{path}.{i}" if len(texts) > 1 else path
+                        insert_vector_placeholders.append(
+                            "(%s, %s, %s, JSON_ARRAY_PACK(%s), "
+                            "CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)"
+                        )
+                        insert_vector_key_values.append((ns, k, pathname))
+                        embedding_requests.append(text)
+        if embedding_requests:
+            if self.embeddings is None:
+                raise ValueError(
+                    "Embedding configuration is required for vector operations "
+                    "(for semantic search). Please provide an Embeddings when "
+                    f"initializing the {self.__class__.__name__}."
+                )
+            vector_embeddings = self.embeddings.embed_documents(embedding_requests)
+            insert_vector_values: list[Any] = []
+            for key_values, embedding in zip(
+                insert_vector_key_values, vector_embeddings
+            ):
+                insert_vector_values.extend(
+                    [*key_values, "[{}]".format(",".join(map(str, embedding)))]
+                )
+            cur.execute(
+                _UPSERT_BASE_VECTOR_SQL
+                + ",".join(insert_vector_placeholders)
+                + _ON_DUPLICATE_KEY_VECTOR_UPDATE_SQL,
+                tuple(insert_vector_values),
+            )
+            is_updated_vector_index = True
+
         if insert_placeholders:
             cur.execute(
                 _UPSERT_BASE_SQL
@@ -380,6 +559,9 @@ class SingleStoreStore(BaseStore):
                 tuple(insert_values),
             )
 
+        if is_updated_vector_index:
+            cur.execute(_FLUSH_VECTOR_STORE_SQL)
+
     def _batch_search_ops(
         self,
         search_ops: "Sequence[tuple[int, SearchOp]]",
@@ -387,26 +569,78 @@ class SingleStoreStore(BaseStore):
         cur: Any,
     ) -> None:
         for idx, op in search_ops:
+            select_params: list[Any] = []
             if op.query:
-                raise NotImplementedError(
-                    "Vector search is not yet implemented in this draft. "
-                    "Track progress in libs/langgraph-singlestore/CHANGELOG.md."
+                if not self.index_config:
+                    raise ValueError(
+                        "Index configuration is required for search operations. "
+                        "Please provide an index configuration "
+                        "when initializing the store."
+                    )
+                if not self.embeddings:
+                    raise ValueError(
+                        "Embeddings are required for search operations. "
+                        "Please provide embeddings "
+                        "when initializing the store."
+                    )
+                embed_query = self.embeddings.embed_query(op.query)
+                metric_type = self.index_config["ann_index_config"]["metric_type"]
+                base_sql = _SELECT_WITH_VECTOR_SEARCH_SQL.format(
+                    AGGREGATE_FUNCTIONS_SQL[metric_type],
+                    metric_type.value,
                 )
-            where_sql, params = _search_where(op)
+                select_params.append(f"[{','.join(map(str, embed_query))}]")
+            else:
+                base_sql = _SELECT_BASE
+
+            where_sql, where_params = _search_where(op)
             # ``_SELECT_BASE`` / ``_REFRESH_TTL_SQL`` end with an unconditional
             # ``AND``; supply a truthy tail when the op has no prefix/filter.
             where_sql = where_sql or "TRUE"
+            base_sql = f"{base_sql} {where_sql}"
+            if op.query:
+                order_by_sql = _ORDER_BY_VECTOR_SEARCH_SQL.format(
+                    SCORE_ORDER_DIRECTION[metric_type]
+                )
+                base_sql = f"{base_sql} {_GROUP_BY_VECTOR_SEARCH_SQL} {order_by_sql}"
+            else:
+                base_sql = f"{base_sql} {_ORDER_BY_BASE}"
             if op.refresh_ttl:
+                if op.query:
+                    # SingleStore rejects ``FOR UPDATE`` on distributed JOINs
+                    # (error 1706), so the vector-search path cannot lock the
+                    # SELECT the way the base path does. Instead, run the
+                    # ranked SELECT normally and refresh TTLs on the exact
+                    # ``(prefix, key)`` pairs returned.
+                    cur.execute(
+                        f"{base_sql}",
+                        (*select_params, *where_params, op.limit, op.offset),
+                    )
+                    fetched = list(cur.fetchall())
+                    results[idx] = [
+                        _row_to_search_item(
+                            _text_to_namespace(_row_get(row, 0, "prefix")), row
+                        )
+                        for row in fetched
+                    ]
+                    by_prefix: dict[str, list[str]] = defaultdict(list)
+                    for row in fetched:
+                        by_prefix[_row_get(row, 0, "prefix")].append(
+                            _row_get(row, 1, "key")
+                        )
+                    for prefix, keys in by_prefix.items():
+                        placeholders = ",".join(["%s"] * len(keys))
+                        cur.execute(
+                            f"{_REFRESH_TTL_SQL_BASE} prefix = %s "
+                            f"AND `key` IN ({placeholders})",
+                            (prefix, *keys),
+                        )
+                    continue
                 cur.execute("BEGIN")
                 try:
                     cur.execute(
-                        f"{_SELECT_BASE} {where_sql} "
-                        # ``prefix``/``key`` tiebreaker makes pagination
-                        # deterministic when many rows share ``updated_at``
-                        # (TIMESTAMP is 1s).
-                        f"ORDER BY updated_at DESC, prefix, `key` LIMIT %s OFFSET %s"
-                        " FOR UPDATE",
-                        (*params, op.limit, op.offset),
+                        f"{base_sql} FOR UPDATE",
+                        (*select_params, *where_params, op.limit, op.offset),
                     )
                     results[idx] = [
                         _row_to_search_item(
@@ -415,8 +649,8 @@ class SingleStoreStore(BaseStore):
                         for row in cur.fetchall()
                     ]
                     cur.execute(
-                        f"{_REFRESH_TTL_SQL} {where_sql}",
-                        params,
+                        f"{_REFRESH_TTL_SQL_BASE} {where_sql}",
+                        where_params,
                     )
                     cur.execute("COMMIT")
                 except BaseException:
@@ -426,9 +660,8 @@ class SingleStoreStore(BaseStore):
                     raise
             else:
                 cur.execute(
-                    f"{_SELECT_BASE} {where_sql} "
-                    f"ORDER BY updated_at DESC, prefix, `key` LIMIT %s OFFSET %s",
-                    (*params, op.limit, op.offset),
+                    f"{base_sql}",
+                    (*select_params, *where_params, op.limit, op.offset),
                 )
                 results[idx] = [
                     _row_to_search_item(
@@ -497,11 +730,11 @@ class SingleStoreStore(BaseStore):
             # ``<=`` mirrors the read-path check (``expires_at > NOW()`` means
             # still valid); a row with ``expires_at == NOW()`` is already
             # invisible to reads and must be sweepable.
-            cur.execute(
-                "DELETE FROM store "
-                "WHERE expires_at IS NOT NULL AND expires_at <= NOW()"
-            )
+            cur.execute(_DELETE_EXPIRED_FROM_STORE)
             deleted_count = cur.rowcount
+            if self.index_config:
+                cur.execute(_DELETE_EXPIRED_FROM_STORE_VECTOR)
+                cur.execute(_FLUSH_VECTOR_STORE_SQL)
             return deleted_count
 
     def start_ttl_sweeper(
@@ -716,14 +949,16 @@ def _namespace_for_suffix_search(namespace: tuple[str, ...]) -> str:
     )
 
 
-def _namespace_for_exact_search(namespace: tuple[str, ...]) -> tuple[str, str]:
+def _namespace_for_exact_search(
+    namespace: tuple[str, ...], column: str = "prefix"
+) -> tuple[str, str]:
     if "*" in namespace:
         return (
-            "prefix LIKE %s",
+            f"{column} LIKE %s",
             _namespace_with_wildcard_for_search(namespace),
         )
     return (
-        "prefix = %s",
+        f"{column} = %s",
         _namespace_to_text(namespace),
     )
 
@@ -756,11 +991,15 @@ def _search_where(op: SearchOp) -> tuple[str, list[Any]]:
     clauses: list[str] = []
     params: list[Any] = []
     if op.namespace_prefix:
+        # Always qualify with ``store.`` so the same WHERE clause works both
+        # against ``FROM store`` (base search) and the JOIN with
+        # ``store_vector`` used by the query path, where a bare ``prefix``
+        # would be ambiguous.
         exact_filter, exact_match_param = _namespace_for_exact_search(
-            op.namespace_prefix
+            op.namespace_prefix, column="store.prefix"
         )
         prefix = _namespace_for_prefix_search(op.namespace_prefix)
-        clauses.append(f"(prefix LIKE %s OR {exact_filter})")
+        clauses.append(f"(store.prefix LIKE %s OR {exact_filter})")
         params.extend([prefix, exact_match_param])
     if op.filter and len(op.filter) > 0:
         adjusted_filter = cast(
@@ -768,7 +1007,7 @@ def _search_where(op: SearchOp) -> tuple[str, list[Any]]:
             {"$and": [{k: v} for k, v in op.filter.items()]},
         )
         filter_clause, filter_params = _parse_filter(
-            filter_dict=adjusted_filter, metadata_field="value"
+            filter_dict=adjusted_filter, metadata_field="store.value"
         )
         clauses.append(f"({filter_clause})")
         params.extend(filter_params)
@@ -805,10 +1044,52 @@ def _row_to_search_item(namespace: tuple[str, ...], row: Any) -> SearchItem:
     value = _row_get(row, 2, "value")
     if not isinstance(value, dict):
         value = json.loads(value)
+    # ``score`` is only present on vector-search rows; the base SELECT has no
+    # such column so we fall back to ``None``.
+    score: Any = None
+    if isinstance(row, dict):
+        score = row.get("score")
+    elif len(row) > 7:
+        score = row[7]
     return SearchItem(
         namespace=namespace,
         key=_row_get(row, 1, "key"),
         value=value,
         created_at=_row_get(row, 3, "created_at"),
         updated_at=_row_get(row, 4, "updated_at"),
+        score=float(score) if score is not None else None,
     )
+
+
+def _ensure_index_config(
+    index_config: SingleStoreIndexConfig,
+) -> tuple[Optional[Embeddings], SingleStoreIndexConfig]:
+    index_config = index_config.copy()
+    tokenized: list[tuple[str, Literal["$"] | list[str]]] = []
+    tot = 0
+    fields = index_config.get("fields") or ["$"]
+    if isinstance(fields, str):
+        fields = [fields]
+    if not isinstance(fields, list):
+        raise ValueError(f"Text fields must be a list or a string. Got {fields}")
+    for p in fields:
+        if p == "$":
+            tokenized.append((p, "$"))
+            tot += 1
+        else:
+            toks = tokenize_path(p)
+            tokenized.append((p, toks))
+            tot += len(toks)
+    index_config["__tokenized_fields"] = tokenized  # type: ignore
+    index_config["__estimated_num_vectors"] = tot  # type: ignore
+    index_config["fields"] = fields  # type: ignore
+    embeddings = ensure_embeddings(
+        index_config.get("embed"),
+    )
+    ann_index_config = index_config.get("ann_index_config", {})
+    ann_index_config["metric_type"] = ann_index_config.get(
+        "metric_type", DistanceStrategy.DOT_PRODUCT
+    )
+    ann_index_config["index_type"] = ann_index_config.get("index_type", "FLAT")
+    index_config["ann_index_config"] = ann_index_config
+    return embeddings, index_config

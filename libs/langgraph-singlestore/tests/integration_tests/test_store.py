@@ -1740,7 +1740,7 @@ class TestSingleStoreStoreSearchOp:
 
     # -------------------------------------------------------------- vector query
 
-    def test_query_raises_not_implemented(
+    def test_query_raises_not_configured(
         self, connection_parameters: ConnectionParameters
     ) -> None:
         """Natural-language search is out of scope for this draft."""
@@ -1749,7 +1749,9 @@ class TestSingleStoreStoreSearchOp:
             store.setup()
             _seed_search(store)
 
-            with pytest.raises(NotImplementedError, match="Vector search"):
+            with pytest.raises(
+                ValueError, match="Please provide an index configuration"
+            ):
                 store.batch(
                     [
                         SearchOp(

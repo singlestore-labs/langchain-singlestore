@@ -74,7 +74,7 @@ def test_prefix_only_produces_like_or_eq_clause(
 ) -> None:
     """A concrete (non-wildcard) prefix matches descendants *or* the exact row."""
     where_sql, params = _search_where(_op(namespace_prefix=namespace_prefix))
-    assert where_sql == "(prefix LIKE %s OR prefix = %s)"
+    assert where_sql == "(store.prefix LIKE %s OR store.prefix = %s)"
     exact_filter, exact_param = _namespace_for_exact_search(namespace_prefix)
     assert exact_filter == "prefix = %s"
     assert params == [_namespace_for_prefix_search(namespace_prefix), exact_param]
@@ -94,7 +94,7 @@ def test_prefix_with_wildcard_produces_two_like_clauses(
 ) -> None:
     """A wildcard prefix uses ``LIKE`` on both sides of the ``OR``."""
     where_sql, params = _search_where(_op(namespace_prefix=namespace_prefix))
-    assert where_sql == "(prefix LIKE %s OR prefix LIKE %s)"
+    assert where_sql == "(store.prefix LIKE %s OR store.prefix LIKE %s)"
     exact_filter, exact_param = _namespace_for_exact_search(namespace_prefix)
     assert exact_filter == "prefix LIKE %s"
     assert params == [_namespace_for_prefix_search(namespace_prefix), exact_param]
@@ -106,7 +106,7 @@ def test_prefix_with_wildcard_produces_two_like_clauses(
 def test_filter_exact_match_string() -> None:
     where_sql, params = _search_where(_op(filter={"status": "active"}))
     assert where_sql == (
-        "(JSON_MATCH_ANY(MATCH_PARAM_STRING_STRICT() = %s, value, %s))"
+        "(JSON_MATCH_ANY(MATCH_PARAM_STRING_STRICT() = %s, store.value, %s))"
     )
     assert params == ["active", "status"]
 
@@ -123,16 +123,18 @@ def test_filter_exact_match_string() -> None:
 )
 def test_filter_exact_match_value_types(value: Any, expected_match_func: str) -> None:
     where_sql, params = _search_where(_op(filter={"field": value}))
-    assert where_sql == (f"(JSON_MATCH_ANY({expected_match_func} = %s, value, %s))")
+    assert where_sql == (
+        f"(JSON_MATCH_ANY({expected_match_func} = %s, store.value, %s))"
+    )
     assert params == [value, "field"]
 
 
 def test_filter_multiple_keys_are_anded_in_insertion_order() -> None:
     where_sql, params = _search_where(_op(filter={"status": "active", "score": 5}))
     assert where_sql == (
-        "(JSON_MATCH_ANY(MATCH_PARAM_STRING_STRICT() = %s, value, %s)"
+        "(JSON_MATCH_ANY(MATCH_PARAM_STRING_STRICT() = %s, store.value, %s)"
         " AND "
-        "JSON_MATCH_ANY(MATCH_PARAM_DOUBLE_STRICT() = %s, value, %s))"
+        "JSON_MATCH_ANY(MATCH_PARAM_DOUBLE_STRICT() = %s, store.value, %s))"
     )
     assert params == ["active", "status", 5, "score"]
 
@@ -140,7 +142,7 @@ def test_filter_multiple_keys_are_anded_in_insertion_order() -> None:
 def test_filter_eq_operator() -> None:
     where_sql, params = _search_where(_op(filter={"status": {"$eq": "active"}}))
     assert where_sql == (
-        "(JSON_MATCH_ANY(MATCH_PARAM_STRING_STRICT() = %s, value, %s))"
+        "(JSON_MATCH_ANY(MATCH_PARAM_STRING_STRICT() = %s, store.value, %s))"
     )
     assert params == ["active", "status"]
 
@@ -148,8 +150,8 @@ def test_filter_eq_operator() -> None:
 def test_filter_ne_operator() -> None:
     where_sql, params = _search_where(_op(filter={"status": {"$ne": "active"}}))
     assert where_sql == (
-        "(NOT JSON_MATCH_ANY(MATCH_PARAM_STRING_STRICT() = %s, value, %s)"
-        " AND JSON_MATCH_ANY_EXISTS(value, %s))"
+        "(NOT JSON_MATCH_ANY(MATCH_PARAM_STRING_STRICT() = %s, store.value, %s)"
+        " AND JSON_MATCH_ANY_EXISTS(store.value, %s))"
     )
     assert params == ["active", "status", "status"]
 
@@ -160,7 +162,7 @@ def test_filter_ne_operator() -> None:
 )
 def test_filter_numeric_comparison_operators(operator: str, sql_op: str) -> None:
     where_sql, params = _search_where(_op(filter={"score": {operator: 4.99}}))
-    assert where_sql == f"(JSON_EXTRACT_DOUBLE(value, %s) {sql_op} %s)"
+    assert where_sql == f"(JSON_EXTRACT_DOUBLE(store.value, %s) {sql_op} %s)"
     assert params == ["score", 4.99]
 
 
@@ -168,7 +170,7 @@ def test_filter_in_operator() -> None:
     where_sql, params = _search_where(_op(filter={"tag": {"$in": ["a", "b", "c"]}}))
     assert where_sql == (
         "(JSON_MATCH_ANY(JSON_ARRAY_CONTAINS_JSON(%s, MATCH_PARAM_JSON()),"
-        " value, %s))"
+        " store.value, %s))"
     )
     assert params == [json.dumps(["a", "b", "c"]), "tag"]
 
@@ -177,20 +179,20 @@ def test_filter_nin_operator() -> None:
     where_sql, params = _search_where(_op(filter={"tag": {"$nin": ["a", "b"]}}))
     assert where_sql == (
         "(NOT JSON_MATCH_ANY(JSON_ARRAY_CONTAINS_JSON(%s, MATCH_PARAM_JSON()),"
-        " value, %s) AND JSON_MATCH_ANY_EXISTS(value, %s))"
+        " store.value, %s) AND JSON_MATCH_ANY_EXISTS(store.value, %s))"
     )
     assert params == [json.dumps(["a", "b"]), "tag", "tag"]
 
 
 def test_filter_exists_true() -> None:
     where_sql, params = _search_where(_op(filter={"tag": {"$exists": True}}))
-    assert where_sql == "(JSON_MATCH_ANY_EXISTS(value, %s))"
+    assert where_sql == "(JSON_MATCH_ANY_EXISTS(store.value, %s))"
     assert params == ["tag"]
 
 
 def test_filter_exists_false() -> None:
     where_sql, params = _search_where(_op(filter={"tag": {"$exists": False}}))
-    assert where_sql == "(NOT JSON_MATCH_ANY_EXISTS(value, %s))"
+    assert where_sql == "(NOT JSON_MATCH_ANY_EXISTS(store.value, %s))"
     assert params == ["tag"]
 
 
@@ -199,9 +201,9 @@ def test_filter_mixes_exact_and_operator_conditions() -> None:
         _op(filter={"status": "active", "score": {"$gte": 3.0}})
     )
     assert where_sql == (
-        "(JSON_MATCH_ANY(MATCH_PARAM_STRING_STRICT() = %s, value, %s)"
+        "(JSON_MATCH_ANY(MATCH_PARAM_STRING_STRICT() = %s, store.value, %s)"
         " AND "
-        "JSON_EXTRACT_DOUBLE(value, %s) >= %s)"
+        "JSON_EXTRACT_DOUBLE(store.value, %s) >= %s)"
     )
     assert params == ["active", "status", "score", 3.0]
 
@@ -217,9 +219,9 @@ def test_prefix_and_filter_are_anded_in_order() -> None:
         )
     )
     assert where_sql == (
-        "(prefix LIKE %s OR prefix = %s)"
+        "(store.prefix LIKE %s OR store.prefix = %s)"
         " AND "
-        "(JSON_MATCH_ANY(MATCH_PARAM_STRING_STRICT() = %s, value, %s))"
+        "(JSON_MATCH_ANY(MATCH_PARAM_STRING_STRICT() = %s, store.value, %s))"
     )
     _, exact_param = _namespace_for_exact_search(("users", "alice"))
     assert params == [
@@ -238,11 +240,11 @@ def test_prefix_and_multi_condition_filter() -> None:
         )
     )
     assert where_sql == (
-        "(prefix LIKE %s OR prefix = %s)"
+        "(store.prefix LIKE %s OR store.prefix = %s)"
         " AND "
-        "(JSON_MATCH_ANY(MATCH_PARAM_STRING_STRICT() = %s, value, %s)"
+        "(JSON_MATCH_ANY(MATCH_PARAM_STRING_STRICT() = %s, store.value, %s)"
         " AND "
-        "JSON_EXTRACT_DOUBLE(value, %s) > %s)"
+        "JSON_EXTRACT_DOUBLE(store.value, %s) > %s)"
     )
     _, exact_param = _namespace_for_exact_search(("docs",))
     assert params == [
@@ -261,9 +263,9 @@ def test_wildcard_prefix_and_filter_combined() -> None:
         _op(namespace_prefix=("users", "*"), filter={"active": True})
     )
     assert where_sql == (
-        "(prefix LIKE %s OR prefix LIKE %s)"
+        "(store.prefix LIKE %s OR store.prefix LIKE %s)"
         " AND "
-        "(JSON_MATCH_ANY(MATCH_PARAM_BOOL_STRICT() = %s, value, %s))"
+        "(JSON_MATCH_ANY(MATCH_PARAM_BOOL_STRICT() = %s, store.value, %s))"
     )
     _, exact_param = _namespace_for_exact_search(("users", "*"))
     assert params == [

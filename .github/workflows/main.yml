@@ -49,11 +49,20 @@ jobs:
         run: make test
 
   integration-tests:
-    # Only langchain-singlestore has a docker-driven integration suite today.
     runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - package: langchain-singlestore
+            install-groups: lint,typing,test,test_image,test_integration
+            test-target: ci_tests
+          - package: langgraph-singlestore
+            install-groups: lint,typing,test,test_integration
+            test-target: integration_tests
     defaults:
       run:
-        working-directory: libs/langchain-singlestore
+        working-directory: libs/${{ matrix.package }}
     steps:
       - name: Checkout code
         uses: actions/checkout@v5
@@ -74,7 +83,7 @@ jobs:
           poetry config virtualenvs.in-project true
 
       - name: Install dependencies
-        run: poetry install --with lint,typing,test,test_image,test_integration
+        run: poetry install --with ${{ matrix.install-groups }}
 
       - name: Run integration tests
-        run: make ci_tests
+        run: make ${{ matrix.test-target }}
