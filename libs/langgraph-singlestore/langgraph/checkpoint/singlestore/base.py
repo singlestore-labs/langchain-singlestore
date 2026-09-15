@@ -10,11 +10,14 @@ from __future__ import annotations
 from typing import Any, AsyncIterator, Iterator, Optional, Sequence
 
 from langchain_core.runnables import RunnableConfig
+from singlestore_langchain_core._connection import create_connection_pool
 from singlestore_langchain_core._utils import (
     DEFAULT_CONNECTOR_NAME,
     compute_connector_version,
     set_connector_attributes,
 )
+from singlestoredb.connection import Connection
+from sqlalchemy.pool import Pool
 
 from langgraph.checkpoint.base import (
     BaseCheckpointSaver,
@@ -23,6 +26,7 @@ from langgraph.checkpoint.base import (
     CheckpointMetadata,
     CheckpointTuple,
 )
+from langgraph.checkpoint.serde.base import SerializerProtocol
 
 _NOT_IMPLEMENTED = (
     "SingleStoreSaver is currently a scaffolding placeholder. "
@@ -36,14 +40,15 @@ class SingleStoreSaver(BaseCheckpointSaver):
     def __init__(
         self,
         *,
-        table_name: str = "checkpoints",
+        connection: Optional[Connection] = None,
+        connection_pool: Optional[Pool] = None,
         pool_size: int = 5,
         max_overflow: int = 10,
         timeout: float = 30,
+        serde: Optional[SerializerProtocol] = None,
         **connection_kwargs: Any,
     ) -> None:
-        super().__init__()
-        self.table_name = table_name
+        super().__init__(serde=serde)
         self.pool_size = pool_size
         self.max_overflow = max_overflow
         self.timeout = timeout
@@ -53,6 +58,14 @@ class SingleStoreSaver(BaseCheckpointSaver):
             connector_version=compute_connector_version("langgraph-singlestore"),
         )
         self.connection_kwargs = connection_kwargs
+        self.connection_pool: Pool = create_connection_pool(
+            connection=connection,
+            connection_pool=connection_pool,
+            pool_size=pool_size,
+            max_overflow=max_overflow,
+            timeout=timeout,
+            connection_kwargs=self.connection_kwargs,
+        )
 
     def setup(self) -> None:
         raise NotImplementedError(_NOT_IMPLEMENTED)
