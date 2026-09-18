@@ -1,17 +1,17 @@
 # langgraph-singlestore
 
 SingleStore-backed persistence for [LangGraph](https://github.com/langchain-ai/langgraph):
-long-term memory (`BaseStore`) and, in progress, graph checkpointing
-(`BaseCheckpointSaver`).
+graph checkpointing (`BaseCheckpointSaver`) and long-term memory
+(`BaseStore`).
 
 ## Status
 
 | Component | Status |
 | --- | --- |
+| `langgraph.checkpoint.singlestore.SingleStoreSaver` | Implemented — `get_tuple`, `list`, `put`, `put_writes`, migrations. |
+| `langgraph.checkpoint.singlestore.AsyncSingleStoreSaver` | Implemented — async wrapper over the sync saver via the default executor. |
 | `langgraph.store.singlestore.SingleStoreStore` | Implemented — CRUD, TTL sweeper, namespace listing, optional vector search. |
 | `langgraph.store.singlestore.AsyncSingleStoreStore` | Implemented — async wrapper over the sync store via the default executor. |
-| `langgraph.checkpoint.singlestore.SingleStoreSaver` | Scaffolding — raises `NotImplementedError`. |
-| `langgraph.checkpoint.singlestore.AsyncSingleStoreSaver` | Scaffolding — raises `NotImplementedError`. |
 
 ## Installation
 
@@ -95,11 +95,78 @@ await store.asetup()
 await store.aput(("users", "u1"), key="profile", value={"name": "Ada"})
 ```
 
-## Checkpoint saver
+## Checkpoint saver quickstart
 
-`SingleStoreSaver` / `AsyncSingleStoreSaver` are placeholders today: the
-constructors accept configuration but every I/O method raises
-`NotImplementedError`. Track progress in [CHANGELOG.md](CHANGELOG.md).
+`SingleStoreSaver` persists LangGraph checkpoints, pending writes, and
+blobs to SingleStore. It implements the full `BaseCheckpointSaver`
+interface (`get_tuple`, `list`, `put`, `put_writes`) and their async
+counterparts (`aget_tuple`, `alist`, `aput`, `aput_writes`).
+
+```python
+from langgraph.checkpoint.singlestore import SingleStoreSaver
+
+saver = SingleStoreSaver(
+    host="127.0.0.1",
+    port=3306,
+    user="root",
+    password="",
+    database="langgraph",
+)
+saver.setup()  # idempotent; applies pending migrations
+
+graph = builder.compile(checkpointer=saver)
+graph.invoke({"input": "hi"}, config={"configurable": {"thread_id": "t1"}})
+
+saver.close()
+```
+
+Or build one from a connection URL:
+
+```python
+saver = SingleStoreSaver.from_conn_string(
+    "user:password@127.0.0.1:3306/langgraph"
+)
+saver.setup()
+```
+
+Like `SingleStoreStore`, the saver accepts any one of:
+
+- an existing `singlestoredb.Connection` via `connection=...`,
+- an existing SQLAlchemy `Pool` via `connection_pool=...`, or
+- plain connection kwargs (`host`, `user`, ...) — an internal
+  `QueueConnectionPool` is built lazily from `pool_size`, `max_overflow`,
+  and `timeout`.
+
+`connection` and `connection_pool` are mutually exclusive. When you pass
+your own `connection`, the saver never closes it — lifecycle stays with
+the caller.
+
+### Async
+
+`AsyncSingleStoreSaver` shares the sync class’s constructor and state.
+Every `a*` method dispatches to the default executor, so the same
+SingleStore connection pool serves both sync and async callers.
+
+```python
+from langgraph.checkpoint.singlestore import AsyncSingleStoreSaver
+
+saver = AsyncSingleStoreSaver.from_conn_string(
+    "user:password@127.0.0.1:3306/langgraph"
+)
+await saver.asetup()
+try:
+    graph = builder.compile(checkpointer=saver)
+    await graph.ainvoke(
+        {"input": "hi"},
+        config={"configurable": {"thread_id": "t1"}},
+    )
+finally:
+    await saver.aclose()
+```
+
+The async saver adds `asetup()` and `aclose()` helpers for non-blocking
+lifecycle management; all read/write methods are inherited from
+`SingleStoreSaver`.
 
 ## Layout
 
