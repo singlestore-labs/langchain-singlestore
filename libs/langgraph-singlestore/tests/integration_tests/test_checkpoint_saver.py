@@ -12,6 +12,7 @@ import asyncio
 from contextlib import closing
 from typing import Any, cast
 
+import pytest
 from langchain_core.runnables import RunnableConfig
 from singlestore_langchain_core._connection import QueueConnectionPool
 from singlestoredb.connection import connect
@@ -717,3 +718,57 @@ class TestLifecycle:
                 saver.close()
         finally:
             conn.close()
+
+    def test_from_conn_string_builds_working_saver(
+        self, connection_parameters: ConnectionParameters
+    ) -> None:
+        """``from_conn_string`` must forward the URL to the driver and yield
+        a fully functional saver: setup + put + get_tuple + delete."""
+        p = connection_parameters
+        conn_string = f"{p.user}:{p.password}@{p.host}:{p.port}/{p.database}"
+
+        saver = SingleStoreSaver.from_conn_string(conn_string)
+        try:
+            saver.setup()
+            cfg = _config("t1")
+            saver.put(cfg, _make_checkpoint(checkpoint_id="cp-1"), {}, {})
+
+            got = saver.get_tuple(cfg)
+            assert got is not None
+            assert got.checkpoint["id"] == "cp-1"
+
+            saver.delete_thread("t1")
+            assert saver.get_tuple(cfg) is None
+        finally:
+            saver.close()
+
+    def test_from_conn_string_accepts_custom_serde(
+        self, connection_parameters: ConnectionParameters
+    ) -> None:
+        """The ``serde`` keyword must reach ``BaseCheckpointSaver.__init__``
+        so callers can plug a non-default serializer."""
+        from langgraph.checkpoint.serde.jsonplus import JsonPlusSerializer
+
+        p = connection_parameters
+        conn_string = f"{p.user}:{p.password}@{p.host}:{p.port}/{p.database}"
+        custom_serde = JsonPlusSerializer()
+
+        saver = SingleStoreSaver.from_conn_string(conn_string, serde=custom_serde)
+        try:
+            assert saver.serde is custom_serde
+        finally:
+            saver.close()
+
+    def test_from_conn_string_rejects_bad_url(
+        self, connection_parameters: ConnectionParameters
+    ) -> None:
+        """A URL that points nowhere must surface as an error at first use,
+        not silently succeed."""
+        saver = SingleStoreSaver.from_conn_string(
+            "no-such-user:no-such-pass@127.0.0.1:1/no-such-db"
+        )
+        try:
+            with pytest.raises(Exception):
+                saver.setup()
+        finally:
+            saver.close()

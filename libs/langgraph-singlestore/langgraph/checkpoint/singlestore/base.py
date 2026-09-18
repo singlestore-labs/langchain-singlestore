@@ -81,6 +81,27 @@ class SingleStoreSaver(BaseSingleStoreSaver):
         # shares a single connection across threads.
         self._lock = threading.Lock()
 
+    @classmethod
+    def from_conn_string(
+        cls,
+        conn_string: str,
+        *,
+        serde: SerializerProtocol | None = None,
+    ) -> SingleStoreSaver:
+        """Create a ``SingleStoreSaver`` from a SingleStore connection URL.
+
+        The URL is forwarded to :func:`singlestoredb.connect` as ``host=`` —
+        it accepts the full ``user:password@host:port/database`` form.
+
+        Args:
+            conn_string: The SingleStore connection URL.
+            serde: Optional serializer.
+
+        Returns:
+            A new ``SingleStoreSaver`` — call ``close()`` when done.
+        """
+        return cls(host=conn_string, serde=serde)
+
     # ------------------------------------------------------------------ setup
     def setup(self) -> None:
         """Run pending migrations. Idempotent; call once before first use."""
