@@ -253,7 +253,7 @@ class SingleStoreSaver(BaseSingleStoreSaver):
                 return None
 
             value = _row_to_checkpoint_dict(row)
-            self._maybe_migrate_pending_sends(cur, thread_id, [value])
+            self._maybe_migrate_pending_sends(cur, [value])
             return self._load_checkpoint_tuple(value)
 
     def list(
@@ -282,8 +282,7 @@ class SingleStoreSaver(BaseSingleStoreSaver):
             if not rows:
                 return
             values = [_row_to_checkpoint_dict(row) for row in rows]
-            thread_id = values[0]["thread_id"]
-            self._maybe_migrate_pending_sends(cur, thread_id, values)
+            self._maybe_migrate_pending_sends(cur, values)
             for value in values:
                 yield self._load_checkpoint_tuple(value)
 
@@ -481,7 +480,6 @@ class SingleStoreSaver(BaseSingleStoreSaver):
     def _maybe_migrate_pending_sends(
         self,
         cur: Any,
-        thread_id: str,
         values: Sequence[dict[str, Any]],
     ) -> None:
         """Fold TASKS-channel writes from parent checkpoints into channel_values.
@@ -497,23 +495,34 @@ class SingleStoreSaver(BaseSingleStoreSaver):
         if not to_migrate:
             return
 
-        parent_ids = [v["parent_checkpoint_id"] for v in to_migrate]
-        placeholders = ",".join(["%s"] * len(parent_ids))
-        # SELECT_PENDING_SENDS_SQL is a template with a single ``%s`` for the
-        # id list; rebuild it here with one placeholder per id.
-        sends_sql = self.SELECT_PENDING_SENDS_SQL.replace("(%s)", f"({placeholders})")
-        cur.execute(sends_sql, (thread_id, *parent_ids))
-        rows = cur.fetchall()
-
-        grouped_by_parent: dict[str, list[dict[str, Any]]] = defaultdict(list)
+        # ``list()`` results may span multiple threads; migrate each thread's
+        # legacy checkpoints against its own ``checkpoint_writes`` rows.
+        by_thread: dict[str, list[dict[str, Any]]] = defaultdict(list)
         for v in to_migrate:
-            grouped_by_parent[v["parent_checkpoint_id"]].append(v)
+            by_thread[v["thread_id"]].append(v)
 
-        for send_row in rows:
-            parent_id = _row_get(send_row, 0, "checkpoint_id")
-            sends = _parse_sends(_row_get(send_row, 1, "sends"))
-            for v in grouped_by_parent[parent_id]:
-                self._migrate_pending_sends(sends, v["checkpoint"], v["channel_values"])
+        for tid, group in by_thread.items():
+            parent_ids = [v["parent_checkpoint_id"] for v in group]
+            placeholders = ",".join(["%s"] * len(parent_ids))
+            # SELECT_PENDING_SENDS_SQL is a template with a single ``%s`` for
+            # the id list; rebuild it here with one placeholder per id.
+            sends_sql = self.SELECT_PENDING_SENDS_SQL.replace(
+                "(%s)", f"({placeholders})"
+            )
+            cur.execute(sends_sql, (tid, *parent_ids))
+            rows = cur.fetchall()
+
+            grouped_by_parent: dict[str, list[dict[str, Any]]] = defaultdict(list)
+            for v in group:
+                grouped_by_parent[v["parent_checkpoint_id"]].append(v)
+
+            for send_row in rows:
+                parent_id = _row_get(send_row, 0, "checkpoint_id")
+                sends = _parse_sends(_row_get(send_row, 1, "sends"))
+                for v in grouped_by_parent[parent_id]:
+                    self._migrate_pending_sends(
+                        sends, v["checkpoint"], v["channel_values"]
+                    )
 
     # -------------------------------------------------------------- cursor
     class _CursorContext:
