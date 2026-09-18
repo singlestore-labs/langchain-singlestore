@@ -9,8 +9,6 @@ import time
 from typing import Any, cast
 
 import pytest
-from singlestoredb.connection import connect
-
 from langgraph.store.base import (
     GetOp,
     Item,
@@ -22,7 +20,9 @@ from langgraph.store.base import (
     SearchOp,
     TTLConfig,
 )
-from langgraph.store.singlestore import SingleStoreStore
+from singlestoredb.connection import connect
+
+from langgraph_singlestore.store import SingleStoreStore
 
 from .conftest import ConnectionParameters
 

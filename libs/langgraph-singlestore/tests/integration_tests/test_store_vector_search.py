@@ -24,6 +24,7 @@ from typing import Any, List, cast
 
 import pytest
 from langchain_core.embeddings import Embeddings
+from langgraph.store.base import PutOp, SearchItem, SearchOp
 from singlestore_langchain_core import (
     ANNIndexConfig,
     AUTOIndexConfig,
@@ -33,9 +34,8 @@ from singlestore_langchain_core import (
 )
 from singlestore_langchain_core._utils import DistanceStrategy
 
-from langgraph.store.base import PutOp, SearchItem, SearchOp
-from langgraph.store.singlestore import SingleStoreStore
-from langgraph.store.singlestore.base import SingleStoreIndexConfig
+from langgraph_singlestore.store import SingleStoreStore
+from langgraph_singlestore.store.base import SingleStoreIndexConfig
 
 from .conftest import ConnectionParameters
 

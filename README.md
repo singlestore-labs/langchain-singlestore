@@ -5,7 +5,7 @@ This monorepo ships three Python packages:
 | Package | Path | Purpose |
 | --- | --- | --- |
 | [`langchain-singlestore`](libs/langchain-singlestore) | `libs/langchain-singlestore/` | LangChain integrations: `SingleStoreVectorStore`, `SingleStoreSemanticCache`, `SingleStoreChatMessageHistory`, `SingleStoreLoader`, `SingleStoreSQLDatabaseRetriever` / `SingleStoreSQLDatabaseChain`. |
-| [`langgraph-singlestore`](libs/langgraph-singlestore) | `libs/langgraph-singlestore/` | LangGraph integrations: `SingleStoreStore` (long-term memory, with optional vector search and TTL) plus `SingleStoreSaver` scaffolding for checkpointing. |
+| [`langgraph-singlestore`](libs/langgraph-singlestore) | `libs/langgraph-singlestore/` | LangGraph integrations: `SingleStoreStore` (long-term memory, with optional vector search and TTL) and `SingleStoreSaver` / `AsyncSingleStoreSaver` for graph checkpointing. |
 | [`singlestore-langchain-core`](libs/singlestore-langchain-core) | `libs/singlestore-langchain-core/` | Internal shared package: connection helpers, SingleStore enums, and the metadata filter DSL. Depended on by the two packages above. |
 
 ## Layout
@@ -48,6 +48,7 @@ See each package's own README for user-facing documentation.
 
 - `langchain-singlestore`: stable, released on PyPI.
 - `singlestore-langchain-core`: 0.x, internal.
-- `langgraph-singlestore`: pre-release. `SingleStoreStore` (sync + async) is
-  implemented; `SingleStoreSaver` is scaffolding and raises
-  `NotImplementedError`.
+- `langgraph-singlestore`: pre-release. Both `SingleStoreStore` (long-term
+  memory) and `SingleStoreSaver` (graph checkpointing) are implemented,
+  each with sync and async variants (`AsyncSingleStoreStore`,
+  `AsyncSingleStoreSaver`).

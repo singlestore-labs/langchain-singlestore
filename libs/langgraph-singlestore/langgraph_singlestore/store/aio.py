@@ -12,7 +12,8 @@ import asyncio
 from typing import Iterable
 
 from langgraph.store.base import Op, Result
-from langgraph.store.singlestore.base import SingleStoreStore
+
+from langgraph_singlestore.store.base import SingleStoreStore
 
 
 class AsyncSingleStoreStore(SingleStoreStore):
