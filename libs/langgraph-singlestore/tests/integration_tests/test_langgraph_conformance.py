@@ -74,3 +74,35 @@ async def test_conformance(connection_parameters: ConnectionParameters) -> None:
         "SingleStoreSaver failed one or more base capabilities; see the "
         "printed report above for details."
     )
+
+
+@pytest.mark.asyncio
+async def test_conformance_async(
+    connection_parameters: ConnectionParameters,
+) -> None:
+    """Same suite driven through ``AsyncSingleStoreSaver``.
+
+    Verifies the async lifecycle helpers (``asetup`` / ``aclose``) and
+    that all base ``a*`` methods inherited from ``SingleStoreSaver`` still
+    satisfy the conformance contract.
+    """
+    from langgraph.checkpoint.singlestore import AsyncSingleStoreSaver
+
+    kwargs = connection_parameters.as_kwargs()
+
+    async def factory() -> AsyncGenerator[BaseCheckpointSaver, None]:
+        _drop_checkpoint_tables(connection_parameters)
+        saver = AsyncSingleStoreSaver(**kwargs)
+        await saver.asetup()
+        try:
+            yield saver
+        finally:
+            await saver.aclose()
+
+    registered = checkpointer_test(name="AsyncSingleStoreSaver")(factory)
+    report = await validate(registered)
+    report.print_report()
+    assert report.passed_all_base(), (
+        "AsyncSingleStoreSaver failed one or more base capabilities; see "
+        "the printed report above for details."
+    )

@@ -1,21 +1,29 @@
 """Asynchronous SingleStore-backed ``BaseCheckpointSaver``.
 
-Placeholder: async I/O will be implemented on top of ``singlestoredb`` with a
-dedicated async pool.
+The ``singlestoredb`` driver is synchronous, so async operations dispatch to
+the default executor. ``SingleStoreSaver`` already exposes every ``a*``
+checkpoint method this way; ``AsyncSingleStoreSaver`` adds ``asetup`` /
+``aclose`` and exists for API parity with ``AsyncPostgresSaver``.
 """
 
 from __future__ import annotations
 
-from langgraph.checkpoint.singlestore.base import SingleStoreSaver
+import asyncio
 
-_NOT_IMPLEMENTED = (
-    "AsyncSingleStoreSaver is currently a scaffolding placeholder. "
-    "Track progress in libs/langgraph-singlestore/CHANGELOG.md."
-)
+from langgraph.checkpoint.singlestore.base import SingleStoreSaver
 
 
 class AsyncSingleStoreSaver(SingleStoreSaver):
-    """Async variant of :class:`SingleStoreSaver`."""
+    """Async variant of :class:`SingleStoreSaver`.
 
-    async def setup(self) -> None:  # type: ignore[override]
-        raise NotImplementedError(_NOT_IMPLEMENTED)
+    Every ``a*`` method inherited from :class:`SingleStoreSaver` already
+    dispatches to the default executor; this subclass adds async lifecycle
+    helpers so callers can drive setup and teardown without blocking the
+    event loop.
+    """
+
+    async def asetup(self) -> None:
+        await asyncio.get_running_loop().run_in_executor(None, self.setup)
+
+    async def aclose(self) -> None:
+        await asyncio.get_running_loop().run_in_executor(None, self.close)
