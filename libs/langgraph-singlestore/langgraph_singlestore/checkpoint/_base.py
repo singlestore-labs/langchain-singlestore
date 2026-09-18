@@ -76,12 +76,12 @@ SELECT
 	(
 		SELECT JSON_AGG(
 			JSON_BUILD_ARRAY(cw.task_id, cw.channel, cw.type, HEX(cw.blob))
+			ORDER BY cw.task_path, cw.task_id, cw.idx
 		)
 		FROM checkpoint_writes cw
 		WHERE cw.thread_id = c.thread_id
 			AND cw.checkpoint_ns = c.checkpoint_ns
 			AND cw.checkpoint_id = c.checkpoint_id
-        ORDER BY cw.task_path, cw.task_id, cw.idx
 	) AS pending_writes
 FROM checkpoints c
 LEFT JOIN checkpoint_blobs bl

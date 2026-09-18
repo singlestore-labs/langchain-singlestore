@@ -80,6 +80,20 @@ class TestClassAttributes:
         """``TASKS`` must be interpolated into the pending-sends query."""
         assert f"channel = '{TASKS}'" in SELECT_PENDING_SENDS_SQL
 
+    def test_select_sql_orders_pending_writes_inside_json_agg(self) -> None:
+        """The ORDER BY must sit inside ``JSON_AGG(...)`` so it sorts the array
+        elements. Outside the aggregate it degenerates into sorting the single
+        aggregated row, so pending writes replay in arbitrary order.
+        """
+        normalized = re.sub(r"\s+", " ", SELECT_SQL)
+        assert re.search(
+            r"JSON_AGG\s*\(\s*JSON_BUILD_ARRAY\("
+            r"\s*cw\.task_id\s*,\s*cw\.channel\s*,\s*cw\.type\s*,\s*HEX\(cw\.blob\)\s*\)"
+            r"\s*ORDER\s+BY\s+cw\.task_path\s*,\s*cw\.task_id\s*,\s*cw\.idx\s*\)",
+            normalized,
+            re.IGNORECASE,
+        ), "pending_writes ORDER BY must be inside JSON_AGG(...) to sort array elements"
+
 
 # ---------------------------------------------------------------- get_next_version
 
