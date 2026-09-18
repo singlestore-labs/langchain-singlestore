@@ -63,8 +63,13 @@ pytest-socket = "^0.7.0"
 [tool.poetry.group.test_integration.dependencies]
 docker = "^7.1.0"
 
+
 [tool.poetry.group.lint.dependencies]
 ruff = "^0.5"
 
 [tool.poetry.group.typing.dependencies]
 mypy = "^1.10"
+
+[tool.poetry.group.dev.dependencies]
+langgraph-checkpoint-conformance = "^0.0.2"
+

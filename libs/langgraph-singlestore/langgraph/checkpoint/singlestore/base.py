@@ -33,6 +33,7 @@ from langgraph.checkpoint.base import (
     CheckpointMetadata,
     CheckpointTuple,
     get_checkpoint_id,
+    get_serializable_checkpoint_metadata,
 )
 from langgraph.checkpoint.serde.base import SerializerProtocol
 from langgraph.checkpoint.singlestore._base import BaseSingleStoreSaver
@@ -226,7 +227,7 @@ class SingleStoreSaver(BaseSingleStoreSaver):
                     checkpoint["id"],
                     parent_checkpoint_id,
                     json.dumps(copy),
-                    json.dumps(dict(metadata)),
+                    json.dumps(get_serializable_checkpoint_metadata(config, metadata)),
                 ),
             )
         return next_config
@@ -325,6 +326,11 @@ class SingleStoreSaver(BaseSingleStoreSaver):
     ) -> None:
         await asyncio.get_running_loop().run_in_executor(
             None, self.put_writes, config, writes, task_id, task_path
+        )
+
+    async def adelete_thread(self, thread_id: str) -> None:
+        await asyncio.get_running_loop().run_in_executor(
+            None, self.delete_thread, thread_id
         )
 
     # ------------------------------------------------------ internal helpers
