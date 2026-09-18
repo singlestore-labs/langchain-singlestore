@@ -15,9 +15,9 @@ from typing import Any, cast
 
 import pytest
 from langchain_core.runnables import RunnableConfig
-
 from langgraph.checkpoint.base import WRITES_IDX_MAP
-from langgraph.checkpoint.singlestore._base import (
+
+from langgraph_singlestore.checkpoint._base import (
     INSERT_CHECKPOINT_WRITES_SQL,
     MIGRATIONS,
     SELECT_PENDING_SENDS_SQL,

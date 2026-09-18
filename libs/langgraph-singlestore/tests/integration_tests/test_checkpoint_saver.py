@@ -14,16 +14,16 @@ from typing import Any, cast
 
 import pytest
 from langchain_core.runnables import RunnableConfig
-from singlestore_langchain_core._connection import QueueConnectionPool
-from singlestoredb.connection import connect
-
 from langgraph.checkpoint.base import (
     Checkpoint,
     CheckpointMetadata,
     CheckpointTuple,
     empty_checkpoint,
 )
-from langgraph.checkpoint.singlestore import SingleStoreSaver
+from singlestore_langchain_core._connection import QueueConnectionPool
+from singlestoredb.connection import connect
+
+from langgraph_singlestore.checkpoint import SingleStoreSaver
 
 from .conftest import ConnectionParameters
 

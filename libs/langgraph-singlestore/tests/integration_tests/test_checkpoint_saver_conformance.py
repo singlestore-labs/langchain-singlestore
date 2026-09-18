@@ -17,7 +17,6 @@ from typing import Any, cast
 
 import pytest
 from langchain_core.runnables import RunnableConfig
-
 from langgraph.checkpoint.base import (
     EXCLUDED_METADATA_KEYS,
     Checkpoint,
@@ -26,7 +25,8 @@ from langgraph.checkpoint.base import (
     empty_checkpoint,
 )
 from langgraph.checkpoint.serde.types import TASKS
-from langgraph.checkpoint.singlestore import SingleStoreSaver
+
+from langgraph_singlestore.checkpoint import SingleStoreSaver
 
 from .conftest import ConnectionParameters
 

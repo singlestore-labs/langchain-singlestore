@@ -10,7 +10,7 @@ from __future__ import annotations
 
 import asyncio
 
-from langgraph.checkpoint.singlestore.base import SingleStoreSaver
+from langgraph_singlestore.checkpoint.base import SingleStoreSaver
 
 
 class AsyncSingleStoreSaver(SingleStoreSaver):

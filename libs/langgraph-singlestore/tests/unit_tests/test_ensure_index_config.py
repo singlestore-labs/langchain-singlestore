@@ -1,5 +1,5 @@
 """Unit tests for ``_ensure_index_config``
-in :mod:`langgraph.store.singlestore.base`."""
+in :mod:`langgraph_singlestore.store.base`."""
 
 from __future__ import annotations
 
@@ -13,7 +13,7 @@ from singlestore_langchain_core import (
 )
 from singlestore_langchain_core._utils import DistanceStrategy
 
-from langgraph.store.singlestore.base import (
+from langgraph_singlestore.store.base import (
     SingleStoreIndexConfig,
     _ensure_index_config,
 )

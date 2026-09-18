@@ -1,5 +1,5 @@
 """Unit tests for module-level helper functions in
-:mod:`langgraph.checkpoint.singlestore.base`.
+:mod:`langgraph_singlestore.checkpoint.base`.
 
 These helpers translate the raw output of the checkpoint SQL statements
 (tuple/dict rows, JSON columns that may or may not have been decoded by the
@@ -14,7 +14,7 @@ from typing import Any
 
 import pytest
 
-from langgraph.checkpoint.singlestore.base import (
+from langgraph_singlestore.checkpoint.base import (
     _as_dict,
     _as_list,
     _parse_channel_values,

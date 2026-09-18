@@ -15,11 +15,11 @@ from collections.abc import AsyncGenerator
 from contextlib import closing
 
 import pytest
-from singlestoredb.connection import connect
-
 from langgraph.checkpoint.base import BaseCheckpointSaver
 from langgraph.checkpoint.conformance import checkpointer_test, validate
-from langgraph.checkpoint.singlestore import SingleStoreSaver
+from singlestoredb.connection import connect
+
+from langgraph_singlestore.checkpoint import SingleStoreSaver
 
 from .conftest import ConnectionParameters
 
@@ -86,7 +86,7 @@ async def test_conformance_async(
     that all base ``a*`` methods inherited from ``SingleStoreSaver`` still
     satisfy the conformance contract.
     """
-    from langgraph.checkpoint.singlestore import AsyncSingleStoreSaver
+    from langgraph_singlestore.checkpoint import AsyncSingleStoreSaver
 
     kwargs = connection_parameters.as_kwargs()
 

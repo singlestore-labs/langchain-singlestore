@@ -5,8 +5,6 @@ from collections.abc import Sequence
 from typing import Any, cast
 
 from langchain_core.runnables import RunnableConfig
-from singlestore_langchain_core import FilterTypedDict, _parse_filter
-
 from langgraph.checkpoint.base import (
     WRITES_IDX_MAP,
     BaseCheckpointSaver,
@@ -14,6 +12,7 @@ from langgraph.checkpoint.base import (
     get_checkpoint_id,
 )
 from langgraph.checkpoint.serde.types import TASKS
+from singlestore_langchain_core import FilterTypedDict, _parse_filter
 
 MetadataInput = dict[str, Any] | None
 

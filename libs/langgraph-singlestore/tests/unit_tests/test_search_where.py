@@ -1,4 +1,4 @@
-"""Unit tests for :func:`langgraph.store.singlestore.base._search_where`.
+"""Unit tests for :func:`langgraph_singlestore.store.base._search_where`.
 
 The function is a pure translator from ``SearchOp`` to a ``WHERE`` SQL
 fragment plus positional parameters. These tests exercise every branch
@@ -14,9 +14,9 @@ import json
 from typing import Any
 
 import pytest
-
 from langgraph.store.base import SearchOp
-from langgraph.store.singlestore.base import (
+
+from langgraph_singlestore.store.base import (
     _namespace_for_exact_search,
     _namespace_for_prefix_search,
     _search_where,

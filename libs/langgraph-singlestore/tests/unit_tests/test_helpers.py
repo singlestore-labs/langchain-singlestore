@@ -1,6 +1,7 @@
-"""Unit tests for helper functions in :mod:`langgraph.store.singlestore.base`.
+"""Unit tests for helper functions in the store base module.
 
-Covers helpers not exercised by ``test_search_where`` or
+Target module: ``langgraph_singlestore.store.base``. Covers
+helpers not exercised by ``test_search_where`` or
 ``test_namespace_escaping``:
 
 * ``_group_ops`` — grouping heterogeneous ops by concrete class
@@ -16,7 +17,6 @@ from datetime import datetime, timezone
 from typing import Any
 
 import pytest
-
 from langgraph.store.base import (
     GetOp,
     Item,
@@ -26,7 +26,8 @@ from langgraph.store.base import (
     SearchItem,
     SearchOp,
 )
-from langgraph.store.singlestore.base import (
+
+from langgraph_singlestore.store.base import (
     _group_ops,
     _row_get,
     _row_to_item,

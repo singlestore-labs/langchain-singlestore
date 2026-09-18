@@ -20,7 +20,7 @@ from singlestore_langchain_core._connection import (
 from singlestoredb.connection import Connection
 from sqlalchemy.pool import Pool
 
-from langgraph.store.singlestore import SingleStoreStore
+from langgraph_singlestore.store import SingleStoreStore
 
 
 class TestConnectionInjectionDispatch:

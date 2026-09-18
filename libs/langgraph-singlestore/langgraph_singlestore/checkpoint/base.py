@@ -17,15 +17,6 @@ from collections.abc import AsyncIterator, Iterator, Sequence
 from typing import Any, Optional, cast
 
 from langchain_core.runnables import RunnableConfig
-from singlestore_langchain_core._connection import create_connection_pool
-from singlestore_langchain_core._utils import (
-    DEFAULT_CONNECTOR_NAME,
-    compute_connector_version,
-    set_connector_attributes,
-)
-from singlestoredb.connection import Connection
-from sqlalchemy.pool import Pool
-
 from langgraph.checkpoint.base import (
     WRITES_IDX_MAP,
     ChannelVersions,
@@ -36,7 +27,16 @@ from langgraph.checkpoint.base import (
     get_serializable_checkpoint_metadata,
 )
 from langgraph.checkpoint.serde.base import SerializerProtocol
-from langgraph.checkpoint.singlestore._base import BaseSingleStoreSaver
+from singlestore_langchain_core._connection import create_connection_pool
+from singlestore_langchain_core._utils import (
+    DEFAULT_CONNECTOR_NAME,
+    compute_connector_version,
+    set_connector_attributes,
+)
+from singlestoredb.connection import Connection
+from sqlalchemy.pool import Pool
+
+from langgraph_singlestore.checkpoint._base import BaseSingleStoreSaver
 
 logger = logging.getLogger(__name__)
 

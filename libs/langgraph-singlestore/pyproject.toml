@@ -11,7 +11,7 @@ readme = "README.md"
 repository = "https://github.com/singlestore-labs/langchain-singlestore"
 license = "Apache-2.0"
 packages = [
-    { include = "langgraph" },
+    { include = "langgraph_singlestore" },
 ]
 
 [tool.poetry.urls]
@@ -29,9 +29,6 @@ singlestore-langchain-core = { path = "../singlestore-langchain-core", develop =
 
 [tool.mypy]
 disallow_untyped_defs = "True"
-# ``langgraph.checkpoint.singlestore`` and ``langgraph.store.singlestore`` share
-# the same leaf name; without these flags mypy sees the two as duplicate
-# top-level "singlestore" modules.
 namespace_packages = true
 explicit_package_bases = true
 mypy_path = "."

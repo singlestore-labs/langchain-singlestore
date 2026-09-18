@@ -14,8 +14,6 @@ from typing import Any, List, cast
 
 import pytest
 from langchain_core.embeddings import Embeddings
-from singlestoredb.connection import connect
-
 from langgraph.store.base import (
     GetOp,
     Item,
@@ -24,8 +22,10 @@ from langgraph.store.base import (
     SearchItem,
     SearchOp,
 )
-from langgraph.store.singlestore import AsyncSingleStoreStore
-from langgraph.store.singlestore.base import SingleStoreIndexConfig
+from singlestoredb.connection import connect
+
+from langgraph_singlestore.store import AsyncSingleStoreStore
+from langgraph_singlestore.store.base import SingleStoreIndexConfig
 
 from .conftest import ConnectionParameters
 

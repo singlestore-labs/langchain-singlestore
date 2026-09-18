@@ -6,12 +6,25 @@ graph checkpointing (`BaseCheckpointSaver`) and long-term memory
 
 ## Status
 
+All public classes are re-exported from the top-level
+`langgraph_singlestore` package for convenience:
+
+```python
+from langgraph_singlestore import (
+    AsyncSingleStoreSaver,
+    AsyncSingleStoreStore,
+    SingleStoreIndexConfig,
+    SingleStoreSaver,
+    SingleStoreStore,
+)
+```
+
 | Component | Status |
 | --- | --- |
-| `langgraph.checkpoint.singlestore.SingleStoreSaver` | Implemented — `get_tuple`, `list`, `put`, `put_writes`, migrations. |
-| `langgraph.checkpoint.singlestore.AsyncSingleStoreSaver` | Implemented — async wrapper over the sync saver via the default executor. |
-| `langgraph.store.singlestore.SingleStoreStore` | Implemented — CRUD, TTL sweeper, namespace listing, optional vector search. |
-| `langgraph.store.singlestore.AsyncSingleStoreStore` | Implemented — async wrapper over the sync store via the default executor. |
+| `langgraph_singlestore.SingleStoreSaver` | Implemented — `get_tuple`, `list`, `put`, `put_writes`, migrations. |
+| `langgraph_singlestore.AsyncSingleStoreSaver` | Implemented — async wrapper over the sync saver via the default executor. |
+| `langgraph_singlestore.SingleStoreStore` | Implemented — CRUD, TTL sweeper, namespace listing, optional vector search. |
+| `langgraph_singlestore.AsyncSingleStoreStore` | Implemented — async wrapper over the sync store via the default executor. |
 
 ## Installation
 
@@ -22,7 +35,7 @@ pip install langgraph-singlestore
 ## Store quickstart
 
 ```python
-from langgraph.store.singlestore import SingleStoreStore
+from langgraph_singlestore import SingleStoreStore
 
 store = SingleStoreStore(
     host="127.0.0.1",
@@ -66,7 +79,7 @@ Pass an `index` config with `dims`, `embed`, and an `ann_index_config`
 to enable semantic `search()`:
 
 ```python
-from langgraph.store.singlestore import SingleStoreStore
+from langgraph_singlestore import SingleStoreStore
 from singlestore_langchain_core import ANNIndexConfig
 
 store = SingleStoreStore(
@@ -88,7 +101,7 @@ class's state; async methods delegate to the sync implementation via the
 default executor.
 
 ```python
-from langgraph.store.singlestore import AsyncSingleStoreStore
+from langgraph_singlestore import AsyncSingleStoreStore
 
 store = AsyncSingleStoreStore(**conn_kwargs)
 await store.asetup()
@@ -103,7 +116,7 @@ interface (`get_tuple`, `list`, `put`, `put_writes`) and their async
 counterparts (`aget_tuple`, `alist`, `aput`, `aput_writes`).
 
 ```python
-from langgraph.checkpoint.singlestore import SingleStoreSaver
+from langgraph_singlestore import SingleStoreSaver
 
 saver = SingleStoreSaver(
     host="127.0.0.1",
@@ -148,7 +161,7 @@ Every `a*` method dispatches to the default executor, so the same
 SingleStore connection pool serves both sync and async callers.
 
 ```python
-from langgraph.checkpoint.singlestore import AsyncSingleStoreSaver
+from langgraph_singlestore import AsyncSingleStoreSaver
 
 saver = AsyncSingleStoreSaver.from_conn_string(
     "user:password@127.0.0.1:3306/langgraph"
@@ -170,10 +183,11 @@ lifecycle management; all read/write methods are inherited from
 
 ## Layout
 
-This package uses PEP 420 namespace packages under `langgraph.checkpoint.*`
-and `langgraph.store.*`, matching the layout used by
-`langgraph-checkpoint-postgres` and friends. Shared connection, filter, and
-index helpers live in
+The top-level `langgraph_singlestore` package re-exports every public
+class. Under the hood, implementations live in
+`langgraph_singlestore.checkpoint` (the checkpoint saver) and
+`langgraph_singlestore.store` (the long-term memory store). Shared
+connection, filter, and index helpers live in
 [`singlestore-langchain-core`](../singlestore-langchain-core).
 
 ## Development

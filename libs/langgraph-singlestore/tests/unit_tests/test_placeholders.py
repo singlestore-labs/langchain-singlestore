@@ -6,15 +6,18 @@ against a mock connection pool.
 
 from unittest.mock import MagicMock
 
+from langgraph.store.base import PutOp
 from singlestore_langchain_core._connection import CallerOwnedConnectionPool
 from sqlalchemy.pool import Pool
 
-from langgraph.checkpoint.singlestore import (
+from langgraph_singlestore.checkpoint import (
     AsyncSingleStoreSaver,
     SingleStoreSaver,
 )
-from langgraph.store.base import PutOp
-from langgraph.store.singlestore import AsyncSingleStoreStore, SingleStoreStore
+from langgraph_singlestore.store import (
+    AsyncSingleStoreStore,
+    SingleStoreStore,
+)
 
 
 def test_async_saver_is_subclass() -> None:
