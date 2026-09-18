@@ -939,8 +939,20 @@ class SingleStoreStore(BaseStore):
 
         def __enter__(self) -> Any:
             self._lock.acquire()
-            self._conn = self._pool.connect()
-            self._cur = self._conn.cursor()
+            try:
+                self._conn = self._pool.connect()
+                self._cur = self._conn.cursor()
+            except BaseException:
+                # __exit__ is not invoked when __enter__ raises; clean up
+                # the partial connection and release the lock ourselves.
+                if self._conn is not None:
+                    try:
+                        self._conn.close()
+                    except Exception:
+                        pass
+                    self._conn = None
+                self._lock.release()
+                raise
             return self._cur
 
         def __exit__(self, exc_type: Any, exc: Any, tb: Any) -> None:
