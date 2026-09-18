@@ -33,6 +33,10 @@ namespace_packages = true
 explicit_package_bases = true
 mypy_path = "."
 
+[[tool.mypy.overrides]]
+module = "langgraph.checkpoint.conformance.*"
+ignore_missing_imports = true
+
 [tool.ruff.lint]
 select = ["E", "F", "I", "T201"]
 
