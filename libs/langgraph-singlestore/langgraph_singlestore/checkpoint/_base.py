@@ -76,7 +76,6 @@ SELECT
 	(
 		SELECT JSON_AGG(
 			JSON_BUILD_ARRAY(cw.task_id, cw.channel, cw.type, HEX(cw.blob))
-			ORDER BY cw.task_path, cw.task_id, cw.idx
 		)
 		FROM checkpoint_writes cw
 		WHERE cw.thread_id = c.thread_id
