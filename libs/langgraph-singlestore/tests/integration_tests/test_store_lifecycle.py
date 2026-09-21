@@ -15,11 +15,11 @@ from __future__ import annotations
 import time
 from contextlib import closing
 
+from langgraph.store.base import GetOp, Item, PutOp, TTLConfig
 from singlestore_langchain_core._connection import QueueConnectionPool
 from singlestoredb.connection import connect
 
-from langgraph.store.base import GetOp, Item, PutOp, TTLConfig
-from langgraph.store.singlestore import SingleStoreStore
+from langgraph_singlestore.store import SingleStoreStore
 
 from .conftest import ConnectionParameters
 

@@ -23,12 +23,12 @@ from typing import Any, List, cast
 
 import pytest
 from langchain_core.embeddings import Embeddings
+from langgraph.store.base import PutOp
 from singlestore_langchain_core import IVF_FLATIndexConfig
 from singlestoredb.connection import connect
 
-from langgraph.store.base import PutOp
-from langgraph.store.singlestore import SingleStoreStore
-from langgraph.store.singlestore.base import SingleStoreIndexConfig
+from langgraph_singlestore.store import SingleStoreStore
+from langgraph_singlestore.store.base import SingleStoreIndexConfig
 
 from .conftest import ConnectionParameters
 

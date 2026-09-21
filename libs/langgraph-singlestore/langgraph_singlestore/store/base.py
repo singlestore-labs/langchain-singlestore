@@ -20,19 +20,6 @@ import threading
 from collections import defaultdict
 from typing import Any, Iterable, Literal, Optional, Sequence, cast
 
-from singlestore_langchain_core import (
-    LANGGRAPH_CONNECTOR_NAME,
-    ANNIndexConfig,
-    DistanceStrategy,
-    FilterTypedDict,
-    _parse_filter,
-    compute_connector_version,
-    create_connection_pool,
-    set_connector_attributes,
-)
-from singlestoredb.connection import Connection
-from sqlalchemy.pool import Pool
-
 from langgraph.store.base import (
     BaseStore,
     Embeddings,
@@ -50,6 +37,18 @@ from langgraph.store.base import (
     get_text_at_path,
     tokenize_path,
 )
+from singlestore_langchain_core import (
+    LANGGRAPH_CONNECTOR_NAME,
+    ANNIndexConfig,
+    DistanceStrategy,
+    FilterTypedDict,
+    _parse_filter,
+    compute_connector_version,
+    create_connection_pool,
+    set_connector_attributes,
+)
+from singlestoredb.connection import Connection
+from sqlalchemy.pool import Pool
 
 logger = logging.getLogger(__name__)
 
@@ -274,6 +273,97 @@ class SingleStoreStore(BaseStore):
         ttl_config: Optional[TTLConfig] = None,
         **connection_kwargs: Any,
     ) -> None:
+        """
+        Following arguments pertain to the connection pool:
+
+        connection (singlestoredb.Connection, optional): An existing
+            caller-owned SingleStoreDB connection. When supplied, every
+            database operation shares this connection through an internal
+            proxy that never closes it; the caller keeps full ownership of
+            the connection lifecycle. Mutually exclusive with
+            ``connection_pool``.
+
+        connection_pool (sqlalchemy.pool.Pool, optional): A pre-built
+            SQLAlchemy connection pool to use as-is. Useful when the
+            surrounding application already manages its own pool (custom
+            pool class, shared pool across components, etc.). Mutually
+            exclusive with ``connection``.
+
+            When neither ``connection`` nor ``connection_pool`` is passed,
+            a default :class:`QueueConnectionPool` is built from
+            ``pool_size``, ``max_overflow``, ``timeout``, and the
+            connection kwargs described below.
+
+        pool_size (int, optional): Determines the number of active connections in
+            the pool. Defaults to 5. Ignored if ``connection`` or
+            ``connection_pool`` is supplied.
+
+        max_overflow (int, optional): Determines the maximum number of connections
+            allowed beyond the pool_size. Defaults to 10. Ignored if
+            ``connection`` or ``connection_pool`` is supplied.
+
+        timeout (float, optional): Specifies the maximum wait time in seconds for
+            establishing a connection. Defaults to 30. Ignored if
+            ``connection`` or ``connection_pool`` is supplied.
+
+
+        Following arguments pertain to the database connection:
+
+        host (str, optional): Specifies the hostname, IP address, or URL for the
+            database connection. The default scheme is "mysql".
+
+        user (str, optional): Database username.
+
+        password (str, optional): Database password.
+
+        port (int, optional): Database port. Defaults to 3306 for non-HTTP
+            connections, 80 for HTTP connections, and 443 for HTTPS connections.
+
+        database (str, optional): Database name.
+
+
+        Additional optional arguments provide further customization over the
+        database connection:
+
+        pure_python (bool, optional): Toggles the connector mode. If True,
+            operates in pure Python mode.
+
+        local_infile (bool, optional): Allows local file uploads.
+
+        charset (str, optional): Specifies the character set for string values.
+
+        ssl_key (str, optional): Specifies the path of the file containing the SSL
+            key.
+
+        ssl_cert (str, optional): Specifies the path of the file containing the SSL
+            certificate.
+
+        ssl_ca (str, optional): Specifies the path of the file containing the SSL
+            certificate authority.
+
+        ssl_cipher (str, optional): Sets the SSL cipher list.
+
+        ssl_disabled (bool, optional): Disables SSL usage.
+
+        ssl_verify_cert (bool, optional): Verifies the server's certificate.
+            Automatically enabled if ``ssl_ca`` is specified.
+
+        ssl_verify_identity (bool, optional): Verifies the server's identity.
+
+        conv (dict[int, Callable], optional): A dictionary of data conversion
+            functions.
+
+        credential_type (str, optional): Specifies the type of authentication to
+            use: auth.PASSWORD, auth.JWT, or auth.BROWSER_SSO.
+
+        autocommit (bool, optional): Enables autocommits.
+
+        results_type (str, optional): Determines the structure of the query results:
+            tuples, namedtuples, dicts.
+
+        results_format (str, optional): Deprecated. This option has been renamed to
+            results_type.
+        """
         super().__init__()
         set_connector_attributes(
             connection_kwargs,
@@ -849,8 +939,20 @@ class SingleStoreStore(BaseStore):
 
         def __enter__(self) -> Any:
             self._lock.acquire()
-            self._conn = self._pool.connect()
-            self._cur = self._conn.cursor()
+            try:
+                self._conn = self._pool.connect()
+                self._cur = self._conn.cursor()
+            except BaseException:
+                # __exit__ is not invoked when __enter__ raises; clean up
+                # the partial connection and release the lock ourselves.
+                if self._conn is not None:
+                    try:
+                        self._conn.close()
+                    except Exception:
+                        pass
+                    self._conn = None
+                self._lock.release()
+                raise
             return self._cur
 
         def __exit__(self, exc_type: Any, exc: Any, tb: Any) -> None:

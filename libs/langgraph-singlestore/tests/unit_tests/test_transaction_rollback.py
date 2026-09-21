@@ -14,10 +14,10 @@ from typing import Any
 from unittest.mock import MagicMock
 
 import pytest
+from langgraph.store.base import GetOp, SearchOp
 from sqlalchemy.pool import Pool
 
-from langgraph.store.base import GetOp, SearchOp
-from langgraph.store.singlestore import SingleStoreStore
+from langgraph_singlestore.store import SingleStoreStore
 
 
 def _make_store() -> tuple[SingleStoreStore, MagicMock]:

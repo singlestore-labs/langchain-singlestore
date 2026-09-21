@@ -30,8 +30,8 @@ from singlestore_langchain_core import (
 from singlestore_langchain_core._utils import DistanceStrategy
 from singlestoredb.connection import connect
 
-from langgraph.store.singlestore import SingleStoreStore
-from langgraph.store.singlestore.base import SingleStoreIndexConfig
+from langgraph_singlestore.store import SingleStoreStore
+from langgraph_singlestore.store.base import SingleStoreIndexConfig
 
 from .conftest import ConnectionParameters
 

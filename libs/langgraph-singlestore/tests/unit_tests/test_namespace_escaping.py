@@ -9,7 +9,7 @@ import re
 
 import pytest
 
-from langgraph.store.singlestore.base import (
+from langgraph_singlestore.store.base import (
     _namespace_for_exact_search,
     _namespace_for_prefix_search,
     _namespace_for_suffix_search,
