@@ -20,7 +20,7 @@ packages = [
 
 [tool.poetry.dependencies]
 python = ">=3.10,<4.0"
-langgraph-checkpoint = ">=2.0.0,<3.0.0"
+langgraph-checkpoint = ">=2.0.0,<5.0.0"
 singlestoredb = "^1.17.2"
 sqlalchemy = "^2.0.40"
 # Path dep for in-tree development; publish workflow rewrites this to a
