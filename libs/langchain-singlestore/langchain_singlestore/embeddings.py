@@ -5,9 +5,11 @@ import struct
 from typing import Any, List, Optional
 
 from langchain_core.embeddings import Embeddings
-from singlestore_langchain_core import create_connection_pool, set_connector_attributes
+from singlestore_langchain_core import create_connection_pool
 from singlestoredb.connection import Connection
 from sqlalchemy.pool import Pool
+
+from langchain_singlestore._utils import set_connector_attributes
 
 # Matches an optionally database-qualified SingleStore identifier where each
 # part is either an unquoted identifier or a backtick-quoted identifier
@@ -184,7 +186,7 @@ class SingleStoreEmbeddings(Embeddings):
         else:
             cur.execute(f"SELECT {self.function_name}(%s)", (text,))
         row = cur.fetchone()
-        if row is None:
+        if row is None or row[0] is None:
             return []  # Return an empty list if no embedding is found
         raw_bytes: bytes = row[0]
         num_floats = len(raw_bytes) // 4

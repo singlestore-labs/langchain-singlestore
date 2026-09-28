@@ -36,6 +36,18 @@ The `SingleStoreSemanticCache` class implements semantic caching for LLM respons
 - Configurable similarity threshold
 - Thread-safe caching operations
 
+### Embeddings
+
+The `SingleStoreEmbeddings` class exposes SingleStore's in-database embedding functions (for example, `cluster.EMBED_TEXT` available through [SingleStore AI/ML functions](https://docs.singlestore.com/cloud/ai/ai-ml-functions/)) through the standard LangChain `Embeddings` interface. Embeddings are computed inside the database.
+
+**Key Features:**
+
+- Standard LangChain `Embeddings` interface (`embed_query`, `embed_documents`)
+- Backed by any SingleStore UDF that returns a packed float32 `BLOB`
+- Supports both single-argument (`fn(text)`) and two-argument (`fn(text, model)`) signatures
+- Works with plain, backtick-quoted, and database-qualified function names
+- Shares the same connection / pool wiring as the rest of the package (caller-owned connection, caller-owned pool, or a built-in `QueueConnectionPool`)
+
 ### Vector Store
 
 The `SingleStoreVectorStore` class provides a powerful document storage and retrieval system with combined vector and full-text search capabilities. It supports multiple search strategies, advanced metadata filtering, and both vector and text-based indexing for optimal performance.
@@ -494,6 +506,76 @@ results = vector_store.similarity_search(
     text_weight=0.3,
     vector_weight=0.7,
 )
+```
+
+### Embeddings
+
+`SingleStoreEmbeddings` implements the standard LangChain `Embeddings` interface on top of a SingleStore database function. The default `function_name` is `cluster.EMBED_TEXT`, which is available on SingleStore Managed Service when [AI/ML functions](https://docs.singlestore.com/cloud/ai/ai-ml-functions/) are enabled.
+
+#### Basic Usage — Managed Service `cluster.EMBED_TEXT`
+
+```python
+from langchain_singlestore import SingleStoreEmbeddings
+
+embeddings = SingleStoreEmbeddings(
+    model="text-embedding-3-small",  # forwarded as the 2nd UDF argument
+    host="127.0.0.1:3306/db",
+    user="user",
+    password="password",
+)
+
+vector = embeddings.embed_query("What is the capital of France?")
+vectors = embeddings.embed_documents([
+    "Paris is the capital of France.",
+    "London is the capital of the United Kingdom.",
+])
+```
+
+When `model` is set, the retriever calls the function with two arguments: `function_name(text, model)`. When `model` is `None`, it calls the function with a single argument: `function_name(text)`.
+
+#### Using a Custom UDF
+
+Any SingleStore function whose result is a packed float32 `BLOB` (e.g. the output of `JSON_ARRAY_PACK`) can be used. This is useful for testing, on-prem clusters without AI/ML functions, or custom fine-tuned models exposed as UDFs.
+
+```sql
+-- Example single-argument UDF returning a 3-dim vector as bytes.
+CREATE OR REPLACE FUNCTION my_embed(input_text VARCHAR(1024))
+RETURNS BLOB AS
+DECLARE
+    len_val INT = CHAR_LENGTH(input_text);
+BEGIN
+    RETURN JSON_ARRAY_PACK(CONCAT('[', len_val, '.0, 0.5, 0.25]'));
+END
+```
+
+```python
+embeddings = SingleStoreEmbeddings(
+    function_name="my_embed",  # or "db_name.my_embed" / "`db name`.my_embed"
+    host="127.0.0.1:3306/db",
+)
+
+vector = embeddings.embed_query("hello")
+# -> [5.0, 0.5, 0.25]
+```
+
+#### Sharing a Connection or Pool
+
+Like the rest of the package, `SingleStoreEmbeddings` accepts either a caller-owned `singlestoredb` connection or a caller-owned SQLAlchemy pool. This avoids duplicate pools when the surrounding application already manages one.
+
+```python
+import singlestoredb
+from singlestore_langchain_core import create_connection_pool
+
+# Option A: reuse a single connection (never closed by the embedder).
+conn = singlestoredb.connect(host="127.0.0.1:3306/db")
+embeddings = SingleStoreEmbeddings(connection=conn)
+
+# Option B: reuse a shared pool.
+pool = create_connection_pool(
+    pool_size=5, max_overflow=10, timeout=30,
+    connection_kwargs={"host": "127.0.0.1:3306/db"},
+)
+embeddings = SingleStoreEmbeddings(connection_pool=pool)
 ```
 
 ### Document Loader
