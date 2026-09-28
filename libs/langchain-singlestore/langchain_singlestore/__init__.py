@@ -9,6 +9,7 @@ from langchain_singlestore._utils import (
 from langchain_singlestore.cache import SingleStoreSemanticCache
 from langchain_singlestore.chat_message_history import SingleStoreChatMessageHistory
 from langchain_singlestore.document_loaders import SingleStoreLoader
+from langchain_singlestore.embeddings import SingleStoreEmbeddings
 from langchain_singlestore.sql_database_retriever import (
     SingleStoreSQLDatabaseChain,
     SingleStoreSQLDatabaseRetriever,
@@ -27,6 +28,7 @@ __all__ = [
     "SingleStoreSemanticCache",
     "SingleStoreChatMessageHistory",
     "SingleStoreLoader",
+    "SingleStoreEmbeddings",
     "SingleStoreSQLDatabaseRetriever",
     "SingleStoreSQLDatabaseChain",
     "FilterTypedDict",
