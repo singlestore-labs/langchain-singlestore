@@ -20,10 +20,13 @@ The `SingleStoreChatMessageHistory` class provides persistent storage for chat m
 
 **Key Features:**
 
-- Automatic schema creation and management
-- Support for multiple conversation sessions
-- Efficient message retrieval and storage
-- Easy integration with LangChain chat models
+- Automatic schema creation with a `session_id` index for cheap per-session lookups
+- Efficient bulk inserts via `add_messages` (single `executemany` round-trip)
+- Multiple conversation sessions sharing one table, safely isolated by `session_id`
+- Deterministic message ordering (`ORDER BY id ASC`)
+- Caller-owned `singlestoredb.Connection` or SQLAlchemy `Pool` support, or a built-in `QueueConnectionPool`
+- Context-manager lifecycle (`with SingleStoreChatMessageHistory(...) as history:`) and explicit `close()` that disposes only pools the class created
+- Easy integration with LangChain chat models and chains
 
 ### Semantic Cache
 
@@ -577,6 +580,103 @@ pool = create_connection_pool(
 )
 embeddings = SingleStoreEmbeddings(connection_pool=pool)
 ```
+
+### Chat Message History
+
+The `SingleStoreChatMessageHistory` class stores LangChain chat messages in a SingleStore table so a conversation can be replayed across sessions and processes. Every history instance is scoped to a `session_id`; multiple sessions can safely share the same table.
+
+#### Basic Usage
+
+```python
+from langchain_core.messages import AIMessage, HumanMessage
+from langchain_singlestore import SingleStoreChatMessageHistory
+
+history = SingleStoreChatMessageHistory(
+    session_id="user-42",
+    host="127.0.0.1",
+    port=3306,
+    user="root",
+    password="your_password",
+    database="my_database",
+)
+
+history.add_message(HumanMessage(content="Hi!"))
+history.add_message(AIMessage(content="Hello, how can I help?"))
+
+for msg in history.messages:
+    print(type(msg).__name__, msg.content)
+
+history.clear()  # remove every message for this session
+```
+
+#### Bulk Inserts
+
+Use `add_messages` when you have more than one message to persist — it performs a single `executemany` round-trip instead of reopening a connection per message.
+
+```python
+history.add_messages([
+    HumanMessage(content="What's the weather like?"),
+    AIMessage(content="Sunny and 24 °C."),
+    HumanMessage(content="Thanks!"),
+])
+```
+
+`aget_messages`, `aadd_messages`, and `aclear` are inherited from `BaseChatMessageHistory` and dispatch the sync methods on a thread executor — safe to call from `async` code.
+
+#### Context-Manager Lifecycle
+
+Use the class as a context manager to guarantee the internal connection pool is disposed on exit. Caller-owned connections and pools are left untouched.
+
+```python
+with SingleStoreChatMessageHistory(
+    session_id="user-42",
+    host="127.0.0.1:3306/my_database",
+) as history:
+    history.add_messages([
+        HumanMessage(content="Remember me?"),
+        AIMessage(content="Of course."),
+    ])
+# pool disposed here
+```
+
+You can also call `history.close()` explicitly; it is idempotent.
+
+#### Sharing a Connection or Pool
+
+Pass an existing `singlestoredb` connection or SQLAlchemy pool to reuse the surrounding application's connection wiring. The history instance never closes caller-owned resources.
+
+```python
+import singlestoredb
+from singlestore_langchain_core import create_connection_pool
+from langchain_singlestore import SingleStoreChatMessageHistory
+
+# Option A: one caller-owned connection shared across every operation.
+conn = singlestoredb.connect(host="127.0.0.1:3306/my_database")
+history = SingleStoreChatMessageHistory(session_id="user-42", connection=conn)
+
+# Option B: one caller-owned pool shared by many histories.
+pool = create_connection_pool(
+    pool_size=5, max_overflow=10, timeout=30,
+    connection_kwargs={"host": "127.0.0.1:3306/my_database"},
+)
+h1 = SingleStoreChatMessageHistory(session_id="user-1", connection_pool=pool)
+h2 = SingleStoreChatMessageHistory(session_id="user-2", connection_pool=pool)
+```
+
+#### Custom Table and Field Names
+
+```python
+history = SingleStoreChatMessageHistory(
+    session_id="user-42",
+    host="127.0.0.1:3306/my_database",
+    table_name="chat_log",
+    id_field="msg_id",
+    session_id_field="conversation",
+    message_field="payload",
+)
+```
+
+The table is created on first use with a `KEY` on the session-id column so per-session lookups do not scan the whole table.
 
 ### Document Loader
 
