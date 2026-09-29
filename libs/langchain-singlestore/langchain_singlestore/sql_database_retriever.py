@@ -8,7 +8,6 @@ import logging
 from typing import Any, Callable, List, Optional
 
 from langchain_core.callbacks.manager import (
-    AsyncCallbackManagerForRetrieverRun,
     CallbackManagerForRetrieverRun,
 )
 from langchain_core.documents import Document
@@ -281,28 +280,6 @@ class SingleStoreSQLDatabaseRetriever(BaseRetriever):
         except Exception as e:
             logger.error(f"Failed to retrieve documents from query: {str(e)}")
             raise
-
-    async def _aget_relevant_documents(
-        self,
-        query: str,
-        *,
-        run_manager: Optional[AsyncCallbackManagerForRetrieverRun] = None,
-    ) -> List[Document]:
-        """Async version of _get_relevant_documents.
-
-        Note: This implementation uses sync execution. For true async,
-        consider using asyncpg or similar async driver.
-
-        Args:
-            query: SQL query string to execute.
-            run_manager: Async callback manager for retriever run.
-
-        Returns:
-            List[Document]: List of Document objects containing query results.
-        """
-        # For now, use sync implementation in async context
-        # In future, this could be enhanced with true async driver
-        return self._get_relevant_documents(query)
 
     def close(self) -> None:
         """Close the connection pool."""
