@@ -1490,18 +1490,40 @@ class SingleStoreVectorStore(VectorStore):
                     or later. To use this version, it must be explicitly passed as
                     the value of full_text_index_version.
 
+        Following arguments pertain to the database connection or connection pool:
+
+            connection (singlestoredb.Connection, optional): An existing
+                caller-owned SingleStoreDB connection. When supplied, every
+                database operation shares this connection through an internal
+                proxy that never closes it; the caller keeps full ownership of
+                the connection lifecycle. Mutually exclusive with
+                ``connection_pool``.
+
+            connection_pool (sqlalchemy.pool.Pool, optional): A pre-built
+                SQLAlchemy connection pool to use as-is. Useful when the
+                surrounding application already manages its own pool (custom
+                pool class, shared pool across components, etc.). Mutually
+                exclusive with ``connection``.
+
+                When neither ``connection`` nor ``connection_pool`` is passed,
+                a default :class:`QueueConnectionPool` is built from
+                ``pool_size``, ``max_overflow``, ``timeout``, and the
+                connection kwargs described below.
+
             pool_size (int, optional): Determines the number of active connections in
-                the pool. Defaults to 5.
+                the pool. Defaults to 5. Ignored if ``connection`` or
+                ``connection_pool`` is supplied.
 
             max_overflow (int, optional): Determines the maximum number of connections
-                allowed beyond the pool_size. Defaults to 10.
+                allowed beyond the pool_size. Defaults to 10. Ignored if
+                ``connection`` or ``connection_pool`` is supplied.
 
             timeout (float, optional): Specifies the maximum wait time in seconds for
-                establishing a connection. Defaults to 30.
+                establishing a connection. Defaults to 30. Ignored if
+                ``connection`` or ``connection_pool`` is supplied.
 
 
-            Additional optional arguments provide further customization over the
-            database connection:
+            Following arguments pertain to the database connection:
 
             pure_python (bool, optional): Toggles the connector mode. If True,
                 operates in pure Python mode.

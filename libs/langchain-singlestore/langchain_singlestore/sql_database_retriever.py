@@ -106,6 +106,9 @@ class SingleStoreSQLDatabaseRetriever(BaseRetriever):
         """Initialize SingleStore SQL Database Retriever.
 
         Args:
+
+            Following arguments pertain to the connection pool:
+
             pool_size (int, optional): Determines the number of active connections in
                 the pool. Defaults to 5. Ignored when ``connection`` or
                 ``connection_pool`` is supplied.
@@ -318,7 +321,6 @@ class SingleStoreSQLDatabaseChain:
     @staticmethod
     def from_url(
         host: str,
-        llm: Any,
         **kwargs: Any,
     ) -> Any:
         """Create a SQL database chain from connection URL.

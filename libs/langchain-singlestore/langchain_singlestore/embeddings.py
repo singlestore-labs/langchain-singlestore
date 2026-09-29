@@ -67,8 +67,6 @@ class SingleStoreEmbeddings(Embeddings):
                 ``pool_size``, ``max_overflow``, ``timeout``, and the
                 connection kwargs described below.
 
-            Following arguments pertain to the newly created connection pool:
-
             pool_size (int, optional): Determines the number of active connections in
                 the pool. Defaults to 5. Ignored if ``connection`` or
                 ``connection_pool`` is supplied.
