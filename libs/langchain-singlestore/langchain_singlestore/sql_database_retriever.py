@@ -321,6 +321,7 @@ class SingleStoreSQLDatabaseChain:
     @staticmethod
     def from_url(
         host: str,
+        llm: Any,
         **kwargs: Any,
     ) -> Any:
         """Create a SQL database chain from connection URL.
