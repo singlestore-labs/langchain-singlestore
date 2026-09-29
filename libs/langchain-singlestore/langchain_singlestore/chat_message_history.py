@@ -47,7 +47,7 @@ class SingleStoreChatMessageHistory(BaseChatMessageHistory):
 
         Args:
 
-
+            session_id (str): Unique identifier for the chat session.
             table_name (str, optional): Specifies the name of the table in use.
                 Defaults to "message_store".
             id_field (str, optional): Specifies the name of the id field in the table.
