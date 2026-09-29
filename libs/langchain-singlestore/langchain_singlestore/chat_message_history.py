@@ -1,10 +1,13 @@
 import json
 import logging
 import re
+from types import TracebackType
 from typing import (
     Any,
     List,
     Optional,
+    Sequence,
+    Type,
 )
 
 from langchain_core.chat_history import BaseChatMessageHistory
@@ -198,11 +201,13 @@ class SingleStoreChatMessageHistory(BaseChatMessageHistory):
                     """CREATE TABLE IF NOT EXISTS {}
                     ({} BIGINT PRIMARY KEY AUTO_INCREMENT,
                     {} TEXT NOT NULL,
-                    {} JSON NOT NULL);""".format(
+                    {} JSON NOT NULL,
+                    KEY ({}));""".format(
                         self.table_name,
                         self.id_field,
                         self.session_id_field,
                         self.message_field,
+                        self.session_id_field,
                     ),
                 )
                 self.table_created = True
@@ -221,12 +226,13 @@ class SingleStoreChatMessageHistory(BaseChatMessageHistory):
             cur = conn.cursor()
             try:
                 cur.execute(
-                    """SELECT {} FROM {} WHERE {} = %s""".format(
+                    """SELECT {} FROM {} WHERE {} = %s ORDER BY {} ASC""".format(
                         self.message_field,
                         self.table_name,
                         self.session_id_field,
+                        self.id_field,
                     ),
-                    (self.session_id),
+                    (self.session_id,),
                 )
                 for row in cur.fetchall():
                     items.append(row[0])
@@ -239,18 +245,32 @@ class SingleStoreChatMessageHistory(BaseChatMessageHistory):
 
     def add_message(self, message: BaseMessage) -> None:
         """Append the message to the record in SingleStoreDB"""
+        self.add_messages([message])
+
+    def add_messages(self, messages: Sequence[BaseMessage]) -> None:
+        """Append a batch of messages to the record in SingleStoreDB.
+
+        Uses a single ``executemany`` call over one pooled connection to avoid
+        per-message round-trips.
+        """
+        if not messages:
+            return
         self._create_table_if_not_exists()
+        rows = [
+            (self.session_id, json.dumps(message_to_dict(message)))
+            for message in messages
+        ]
         conn = self.connection_pool.connect()
         try:
             cur = conn.cursor()
             try:
-                cur.execute(
+                cur.executemany(
                     """INSERT INTO {} ({}, {}) VALUES (%s, %s)""".format(
                         self.table_name,
                         self.session_id_field,
                         self.message_field,
                     ),
-                    (self.session_id, json.dumps(message_to_dict(message))),
+                    rows,
                 )
             finally:
                 cur.close()
@@ -269,9 +289,35 @@ class SingleStoreChatMessageHistory(BaseChatMessageHistory):
                         self.table_name,
                         self.session_id_field,
                     ),
-                    (self.session_id),
+                    (self.session_id,),
                 )
             finally:
                 cur.close()
         finally:
             conn.close()
+
+    def close(self) -> None:
+        """Dispose of the underlying connection pool.
+
+        Safe to call multiple times. For caller-owned connections or pools
+        this is a no-op (ownership stays with the caller).
+        """
+        if self.connection_pool is not None:
+            self.connection_pool.dispose()
+
+    def __enter__(self) -> "SingleStoreChatMessageHistory":
+        return self
+
+    def __exit__(
+        self,
+        exc_type: Optional[Type[BaseException]],
+        exc: Optional[BaseException],
+        tb: Optional[TracebackType],
+    ) -> None:
+        self.close()
+
+    def __del__(self) -> None:
+        try:
+            self.close()
+        except Exception as e:  # pragma: no cover - best-effort cleanup
+            logger.warning(f"Error closing connection pool: {str(e)}")
