@@ -52,3 +52,6 @@ See each package's own README for user-facing documentation.
   memory) and `SingleStoreSaver` (graph checkpointing) are implemented,
   each with sync and async variants (`AsyncSingleStoreStore`,
   `AsyncSingleStoreSaver`).
+
+## Disclaimer
+Attention: The code in this repository is intended for experimental use only and is not fully tested, documented, or supported by SingleStore. Visit the SingleStore Forums to ask questions about this repository.
